@@ -1,0 +1,21 @@
+# Python caches and byte code
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environments (large, not needed in the image)
+.venv/
+venv/
+
+# Tool caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# VCS and docs (the app does not need these at runtime)
+.git/
+.gitignore
+*.md
+
+# Any host-side Ollama model store
+docker/models/

@@ -1,0 +1,176 @@
+/* Shared F&S WebUI styles (WEBUI.md §1). Light theme, system fonts. */
+:root {
+    --bg: #f6f7f9;
+    --panel: #ffffff;
+    --panel-2: #f0f2f5;
+    --text: #1c2430;
+    --muted: #5b6675;
+    --accent: #2f6fd6;
+    --accent-2: #e8f0ff;
+    --success: #1f9d55;
+    --success-bg: #e7f6ec;
+    --error: #cf3030;
+    --error-bg: #fdeaea;
+    --border: #dfe3ea;
+    --radius: 10px;
+}
+
+* { box-sizing: border-box; }
+
+body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+}
+
+/* Top navigation (§1): switches between the two stages. */
+.topnav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 12px 24px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+.topnav-inner { display: flex; gap: 8px; }
+.nav-link {
+    text-decoration: none;
+    color: var(--muted);
+    padding: 8px 14px;
+    border-radius: 8px;
+    font-weight: 600;
+    font-size: 15px;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+.nav-link:hover { background: var(--panel-2); color: var(--text); }
+.nav-link.active { background: var(--accent-2); color: var(--accent); }
+
+.topnav-main {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 28px 20px 64px;
+}
+
+/* Language selector (§5): the SV/EN toggle lives in the nav. */
+.lang-toggle { display: flex; gap: 4px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.lang-btn {
+    background: transparent;
+    border: none;
+    color: var(--muted);
+    padding: 6px 10px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+    font-family: inherit;
+}
+.lang-btn.active { background: var(--accent); color: #fff; }
+
+/* Layout panels (§3.1): the primary block wraps the required fields. */
+.panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+    margin-bottom: 16px;
+}
+.panel h2 {
+    font-size: 13px;
+    margin: 0 0 16px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-weight: 700;
+}
+
+/* Fields (§3.1, §4.1). */
+label.field { display: block; margin-bottom: 16px; }
+label.field .lbl { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+label.field .lbl .req { color: var(--error); }
+select, input, textarea {
+    width: 100%;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    padding: 10px 12px;
+    font-size: 15px;
+    font-family: inherit;
+}
+select, input:focus, textarea:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-2);
+}
+textarea { resize: vertical; min-height: 84px; }
+
+.row { display: flex; gap: 16px; flex-wrap: wrap; }
+.row .field { flex: 1 1 200px; }
+
+/* Collapsible optional group (§3.1, §4.1). */
+.optional-group { border: 1px dashed var(--border); border-radius: 8px; overflow: hidden; }
+.optional-toggle {
+    width: 100%;
+    background: transparent;
+    border: none;
+    color: var(--muted);
+    padding: 10px 4px;
+    text-align: left;
+    font-size: 13px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+.optional-toggle .chev { transition: transform 0.15s ease; }
+.optional-toggle[aria-expanded="false"] .chev { transform: rotate(-90deg); }
+.optional-body { padding: 4px 20px 16px; }
+.optional-body.hidden { display: none; }
+
+/* Buttons (§3.1). */
+button.action, button.send {
+    border: none;
+    border-radius: 8px;
+    padding: 11px 20px;
+    font-size: 15px;
+    font-family: inherit;
+    font-weight: 600;
+    cursor: pointer;
+}
+button.action.primary { background: var(--accent); color: #fff; }
+button.action.secondary { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); }
+button.action:disabled, button.send:disabled { opacity: 0.6; cursor: default; }
+button.action.danger { background: var(--error); color: #fff; }
+
+/* Indicators (§3.4, §4.4): progress / success / error / duplicate. */
+.indicator {
+    min-height: 22px;
+    font-size: 14px;
+    margin-top: 14px;
+    padding: 0;
+    transition: color 0.15s ease;
+}
+.indicator.success { color: var(--success); }
+.indicator.error { color: var(--error); }
+.indicator.duplicate { color: var(--error); }
+.indicator .id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+
+/* Progress spinner (§3.2, §4.2: blocking request). */
+.spinner {
+    width: 14px; height: 14px;
+    border: 2px solid rgba(47, 111, 214, 0.35);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    display: inline-block;
+    animation: spin 0.7s linear infinite;
+    vertical-align: -2px;
+    margin-right: 8px;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.actions { display: flex; gap: 12px; align-items: center; margin-top: 8px; }

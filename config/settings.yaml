@@ -1,0 +1,20 @@
+db:
+  dsn: "postgresql://fiffia:fiffia@localhost:5999/fiffia_fs"
+  pool_min: 1
+  pool_max: 5
+ollama:
+  base_url: "http://localhost:11434"
+  embed_model: "snowflake-arctic-embed2:568m"
+  llm_model: "gemma4:e4b"
+retrieval:
+  pool: 30
+  top_k_records: 10
+  top_k_rag: 8
+  rrf_k: 60
+agent:
+  max_turns: 5
+ui:
+  lang_default: "sv"
+stats:
+  role_name: "fs_stats_reader"
+  role_password: "change_me"

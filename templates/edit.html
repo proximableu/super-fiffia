@@ -1,0 +1,389 @@
+{% extends "base.html" %}
+{% block title %}F&S — Redigera post{% endblock %}
+
+{% block styles %}
+:root {
+    --panel: #1b2233;
+    --panel-2: #232c41;
+    --text: #e6e9f0;
+    --muted: #9aa6bd;
+    --accent: #3f8efc;
+    --success: #2ec27e;
+    --error: #f15d6a;
+    --border: #2c3548;
+    --accent-2: #24314d;
+}
+.wrap { max-width: 760px; margin: 0 auto; padding: 28px 20px 64px; }
+header.page-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 24px;
+}
+header.page-head h1 { font-size: 22px; margin: 0; }
+.hint { color: var(--muted); font-size: 14px; margin-top: 4px; }
+.panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+    margin-bottom: 16px;
+}
+.panel h2 {
+    font-size: 15px; margin: 0 0 16px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.06em;
+}
+label.field { display: block; margin-bottom: 16px; }
+label.field .lbl { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+label.field .lbl .req { color: var(--error); }
+select, input, textarea {
+    width: 100%;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    padding: 10px 12px;
+    font-size: 15px;
+    font-family: inherit;
+}
+textarea { resize: vertical; min-height: 84px; }
+select:focus, input:focus, textarea:focus {
+    outline: none; border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-2);
+}
+.row { display: flex; gap: 16px; flex-wrap: wrap; }
+.row .field { flex: 1 1 200px; }
+.optional-group { border: 1px dashed var(--border); border-radius: 8px; overflow: hidden; }
+.optional-toggle {
+    width: 100%; background: transparent; border: none; color: var(--muted);
+    padding: 10px 4px; text-align: left; font-size: 13px; cursor: pointer;
+    display: flex; align-items: center; justify-content: space-between;
+}
+.optional-toggle .chev { transition: transform 0.15s ease; }
+.optional-toggle[aria-expanded="false"] .chev { transform: rotate(-90deg); }
+.optional-body { padding: 4px 20px 16px; }
+.optional-body.hidden { display: none; }
+.actions { display: flex; gap: 12px; align-items: center; margin-top: 8px; }
+.indicator {
+    min-height: 22px; font-size: 14px; margin-top: 14px; padding: 0;
+    transition: color 0.15s ease;
+}
+.indicator.success { color: var(--success); }
+.indicator.error { color: var(--error); }
+.indicator .id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+{% endblock %}
+
+{% block content %}
+<div class="wrap">
+    <header class="page-head">
+        <div>
+            <h1 data-i18n="title">Redigera post</h1>
+            <p class="hint" data-i18n="hint">Ändra fälten nedan och spara. Textändringar re-indexcas.</p>
+        </div>
+        <span class="status-pill status-{{ record.status }}" data-i18n-status="{{ record.status }}">{{ record.status }}</span>
+    </header>
+
+    {% set edit = request.query_params.get('edit') %}
+    {% set success_flag = (edit == 'ok') %}
+    {% set duplicate_flag = (edit == 'duplicate') %}
+    {% set notfound_flag = (edit == 'not_found') %}
+    {% set invalid_flag = (edit == 'invalid') %}
+    {% set error_flag = (edit == 'error') %}
+
+    {% if success_flag or duplicate_flag or notfound_flag or invalid_flag or error_flag %}
+    <div id="indicator" class="indicator error" role="status" aria-live="polite"
+         data-i18n-err="duplicate">{% if duplicate_flag %}{% if "en" in lang %}Already exists — nothing saved.{% else %}Finns redan — ingenting sparad.{% endif %}{% elif notfound_flag %}{% if "en" in lang %}The record no longer exists.{% else %}Posten finns inte längre.{% endif %}{% elif invalid_flag %}{% if "en" in lang %}Invalid taxonomy or fields.{% else %}Fel taxonomi eller ogifta fält.{% endif %}{% elif error_flag %}{% if "en" in lang %}Something went wrong saving.{% else %}Något gick vid sparandet.{% endif %}{% else %}{% if "en" in lang %}Saved.{% else %}Sparad.{% endif %}{% endif %}</div>
+    {% else %}
+    <div id="indicator" class="indicator"></div>
+    {% endif %}
+
+    <form id="edit-form" method="post" action="/ingest/{{ record.id }}/edit" novalidate>
+        <!-- Required block (§3.1) -->
+        <div class="panel">
+            <h2 data-i18n="requiredHeading">Krävda fält</h2>
+
+            <label class="field">
+                <span class="lbl" data-i18n="category">Kategori <span class="req">*</span></span>
+                <select id="category" name="category" data-i18n-aria-placeholder="categoryPlaceholder">
+                    <option value="" disabled>——</option>
+                    {% for c in categories %}
+                    <option value="{{ c.id }}"{{ " selected" if c.id == record.category }}>{{ c.label }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+
+            <label class="field">
+                <span class="lbl" data-i18n="product">Produkt <span class="req">*</span></span>
+                <select id="product" name="product" data-i18n-aria-placeholder="productPlaceholder">
+                    <option value="" disabled>——</option>
+                </select>
+            </label>
+
+            <label class="field">
+                <span class="lbl" data-i18n="failure">Kundens felbeskrivning <span class="req">*</span></span>
+                <textarea id="failure_description" name="failure_description" data-i18n-placeholder="failurePlaceholder">{{ record.failure_description }}</textarea>
+            </label>
+
+            <label class="field">
+                <span class="lbl" data-i18n="solution">Lösningsbeskrivning <span class="req">*</span></span>
+                <textarea id="solution_description" name="solution_description" data-i18n-placeholder="solutionPlaceholder">{{ record.solution_description }}</textarea>
+            </label>
+        </div>
+
+        <!-- Optional, collapsible block (§3.1) -->
+        <div class="panel optional-group">
+            <button type="button" id="optional-toggle" class="optional-toggle"
+                    aria-expanded="true" aria-controls="optional-body">
+                <span data-i18n="optionalHeading">Valfrihetsfält</span>
+                <span class="chev">▼</span>
+            </button>
+            <div id="optional-body" class="optional-body">
+                <div class="row">
+                    <label class="field">
+                        <span class="lbl" data-i18n="articleNumber">Artikelnr</span>
+                        <select id="article_number" name="article_number" data-i18n-aria-placeholder="articlePlaceholder">
+                            <option value=""{{ " selected" if not record.article_number }}>——</option>
+                        </select>
+                    </label>
+
+                    <label class="field">
+                        <span class="lbl" data-i18n="ncr">NCR</span>
+                        <input id="ncr" name="ncr" type="text" value="{{ record.ncr or '' }}" data-i18n-placeholder="ncrPlaceholder" />
+                    </label>
+                </div>
+                <label class="field">
+                    <span class="lbl" data-i18n="bugRecordNumber">Ägarnr</span>
+                    <input id="bug_record_number" name="bug_record_number" type="text" value="{{ record.bug_record_number or '' }}" data-i18n-placeholder="bugRecordPlaceholder" />
+                </label>
+            </div>
+        </div>
+
+        <div class="actions">
+            <button type="submit" class="action primary" id="save-btn" data-i18n="save">Spara ändringar</button>
+            <a class="action secondary" href="/ingest/list" data-i18n="cancel">Avbryt</a>
+        </div>
+
+        <span class="id" id="record-id" style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--muted);">#{{ record.id }}</span>
+    </form>
+</div>
+
+<div id="submit-busy" class="spinner" hidden></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+    "use strict";
+
+    // The record's current values, so the product / article cascades can
+    // pre-select what the edit is starting from (category is pre-selected by
+    // Jinja; product and article_number only get their option lists from the
+    // API, so the current value would otherwise be lost on load).
+    var RECORDED = {
+        category: "{{ record.category }}",
+        product: "{{ record.product }}",
+        article_number: "{{ record.article_number or '' }}"
+    };
+
+    var I18N = {
+        sv: {
+            title: "Redigera post",
+            hint: "Ändra fälten nedan och spara. Textändringar re-indexcas.",
+            save: "Spara ändringar",
+            cancel: "Avbryt",
+            requiredHeading: "Krävda fält",
+            category: "Kategori <span class=\"req\">*</span>",
+            product: "Produkt <span class=\"req\">*</span>",
+            failure: "Kundens felbeskrivning <span class=\"req\">*</span>",
+            solution: "Lösningsbeskrivning <span class=\"req\">*</span>",
+            optionalHeading: "Valfrihetsfält",
+            articleNumber: "Artikelnr",
+            ncr: "NCR",
+            bugRecordNumber: "Ägarnr",
+            categoryPlaceholder: "—— Välj kategori",
+            productPlaceholder: "—— Välj produkt",
+            articlePlaceholder: "—— Välj artikel",
+            failurePlaceholder: "Beskriv vad kunden upplever …",
+            solutionPlaceholder: "Beskriv hur felet löses …",
+            ncrPlaceholder: "t.ex. NCR-2024-017",
+            bugRecordPlaceholder: "t.ex. BUG-4821"
+        },
+        en: {
+            title: "Edit record",
+            hint: "Change the fields below and save. Text changes are re-indexed.",
+            save: "Save changes",
+            cancel: "Cancel",
+            requiredHeading: "Required fields",
+            category: "Category <span class=\"req\">*</span>",
+            product: "Product <span class=\"req\">*</span>",
+            failure: "Customer failure description <span class=\"req\">*</span>",
+            solution: "Solution description <span class=\"req\">*</span>",
+            optionalHeading: "Optional fields",
+            articleNumber: "Article number",
+            ncr: "NCR",
+            bugRecordNumber: "Bug record number",
+            categoryPlaceholder: "—— Select category",
+            productPlaceholder: "—— Select product",
+            articlePlaceholder: "—— Select article",
+            failurePlaceholder: "Describe what the customer experiences …",
+            solutionPlaceholder: "Describe how the failure is solved …",
+            ncrPlaceholder: "e.g. NCR-2024-017",
+            bugRecordPlaceholder: "e.g. BUG-4821"
+        }
+    };
+
+    var LANG = "sv";
+    if (window.location.search.indexOf("lang=en") !== -1 ||
+        document.cookie.indexOf("lang=en") !== -1) {
+        LANG = "en";
+    }
+
+    var form = document.getElementById("edit-form");
+    var categoryEl = document.getElementById("category");
+    var productEl = document.getElementById("product");
+    var articleEl = document.getElementById("article_number");
+    var indicator = document.getElementById("indicator");
+    var busy = document.getElementById("submit-busy");
+    var saveBtn = document.getElementById("save-btn");
+
+    function setLabel(key) {
+        var node = document.querySelector("[data-i18n='" + key + "']");
+        if (node) node.innerHTML = I18N[LANG][key];
+    }
+
+    function setPlaceholder(id, key) {
+        var node = document.getElementById(id);
+        if (node) node.placeholder = I18N[LANG][key];
+    }
+
+    function applyI18n() {
+        ["title", "hint", "save", "cancel", "requiredHeading", "category",
+            "product", "failure", "solution", "optionalHeading",
+            "articleNumber", "ncr", "bugRecordNumber"].forEach(setLabel);
+        setPlaceholder("category", "categoryPlaceholder");
+        setPlaceholder("product", "productPlaceholder");
+        setPlaceholder("article_number", "articlePlaceholder");
+        setPlaceholder("failure_description", "failurePlaceholder");
+        setPlaceholder("solution_description", "solutionPlaceholder");
+        setPlaceholder("ncr", "ncrPlaceholder");
+        setPlaceholder("bug_record_number", "bugRecordPlaceholder");
+        updateLangButtons();
+    }
+
+    function updateLangButtons() {
+        document.querySelectorAll(".lang-toggle button").forEach(function (btn) {
+            btn.classList.toggle("active", btn.getAttribute("data-lang") === LANG);
+        });
+    }
+
+    function populateSelect(select, items, current) {
+        var current = current;
+        select.innerHTML = "";
+        var def = document.createElement("option");
+        def.value = "";
+        def.disabled = true;
+        def.textContent = "——";
+        select.appendChild(def);
+        items.forEach(function (item) {
+            var opt = document.createElement("option");
+            opt.value = item.id;
+            opt.textContent = item[LANG === "en" ? "label_en" : "label_sv"];
+            select.appendChild(opt);
+        });
+        if (current) select.value = current;
+    }
+
+    function onCategoryChange() {
+        productEl.innerHTML = "";
+        articleEl.innerHTML = "";
+        var cat = categoryEl.value;
+        if (!cat) return;
+        fetch("/api/taxonomy/products?category=" + encodeURIComponent(cat))
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                // Pre-fill the product from the current record value after reload.
+                populateSelect(productEl, data.items, "");
+            })
+            .catch(function () { /* leave on default */ });
+    }
+
+    function onProductChange() {
+        articleEl.innerHTML = "";
+    }
+
+    function clientValidate() {
+        var missing = [];
+        if (!categoryEl.value) missing.push(I18N[LANG].category);
+        if (!productEl.value) missing.push(I18N[LANG].product);
+        if (!document.getElementById("failure_description").value.trim()) {
+            missing.push(I18N[LANG].failure);
+        }
+        if (!document.getElementById("solution_description").value.trim()) {
+            missing.push(I18N[LANG].solution);
+        }
+        return missing;
+    }
+
+    form.addEventListener("submit", function (event) {
+        var missing = clientValidate();
+        if (missing.length) {
+            indicator.className = "indicator error";
+            indicator.textContent = (LANG === "en" ? "Please fill in: " : "Vänligen fyll i: ") + missing.join(", ");
+            event.preventDefault();
+            return;
+        }
+        hideBusy();
+    });
+
+    document.getElementById("optional-toggle").addEventListener("click", function () {
+        var expanded = this.getAttribute("aria-expanded") === "true";
+        this.setAttribute("aria-expanded", String(!expanded));
+        document.getElementById("optional-body").classList.toggle("hidden", expanded);
+    });
+
+    document.querySelectorAll(".lang-toggle button").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+            LANG = btn.getAttribute("data-lang");
+            applyI18n();
+        });
+    });
+
+    // Init: build the product/article cascades from the taxonomy so the
+    // pre-filled category still selects its children (loaded lazily).
+    function initCascades() {
+        var cat = categoryEl.value;
+        if (!cat) return;
+        fetch("/api/taxonomy/products?category=" + encodeURIComponent(cat))
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                // Pre-fill the product from the current record value.
+                populateSelect(productEl, data.items, RECORDED.product);
+                // If the record already carries an article_number, load its
+                // product's article set so the pre-filled value stays selectable.
+                var artSel = document.getElementById("article_number");
+                if (artSel && RECORDED.article_number) {
+                    var prod = RECORDED.article_number
+                        ? RECORDED.product
+                        : (data.items[0] ? data.items[0].id : RECORDED.product);
+                    fetch("/api/taxonomy/articles?category=" +
+                        encodeURIComponent(cat) +
+                        "&product=" + encodeURIComponent(prod))
+                        .then(function (r) { return r.json(); })
+                        .then(function (adata) {
+                            populateSelect(artSel, adata.items, RECORDED.article_number);
+                        })
+                        .catch(function () { /* leave article on default */ });
+                }
+            });
+    }
+
+    categoryEl.addEventListener("change", onCategoryChange);
+    productEl.addEventListener("change", onProductChange);
+
+    applyI18n();
+    // Product <select> is empty until the category is fetched (edit.html pre-fills
+    // category via Jinja, but the child options come from the API).
+    initCascades();
+})();
+</script>
+{% endblock %}

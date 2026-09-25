@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{% block title %}F&S{% endblock %}</title>
+    <link rel="stylesheet" href="/static/app.css" />
+    <style>{% block styles %}{% endblock %}</style>
+</head>
+<body>
+    <!-- Stage navigation (§1: two stages, one page each, switched by the nav). -->
+    <header class="topnav">
+        <nav class="topnav-inner">
+            <a class="nav-link" data-i18n="navIngest" data-nav="ingest" href="/ingest">Registrera titel</a>
+            <a class="nav-link" data-i18n="navChat" data-nav="chat" href="/chat">Felsökning</a>
+        </nav>
+        <!-- Language selector (§5): shared markup; each page binds its own i18n table. -->
+        <div class="lang-toggle" role="group" aria-label="Language">
+            <button type="button" data-lang="sv" class="lang-btn active">SV</button>
+            <button type="button" data-lang="en" class="lang-btn">EN</button>
+        </div>
+    </header>
+
+    <main class="topnav-main" id="app">
+        {% block content %}{% endblock %}
+    </main>
+
+    <script src="/static/app.js" defer></script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

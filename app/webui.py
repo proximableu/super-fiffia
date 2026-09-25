@@ -1,0 +1,479 @@
+"""WebUI routes (T5.1 + T5.4).
+
+Jinja2 server rendering for the two WebUI stages (WEBUI.md):
+
+    * ``/ingest`` — the Submit form (§3) and, below it, the record list (§3.5).
+    * ``/chat``   — the Troubleshooting form (§4).
+
+and the shared top-level chrome:
+
+    * the top navigation that switches between the two stages (§1);
+    * the session language selector (§5) — ``POST /lang`` sets ``sv`` / ``en``;
+    * the static assets in ``static/`` (CSS/JS), served under ``/static``.
+
+Each stage page renders on top of the shared ``base.html`` layout: the nav and
+the language toggle live in the base template and are therefore visible on both
+pages. The per-stage interaction (the cascade, indicators, blocking POSTs) stays
+in the page's own ``<script>`` — see ``submit.html``, ``troubleshooting.html``
+and the edit form in ``edit.html``.
+
+Routes
+------
+
+The list (``GET /ingest/list``) renders a bare partial
+(``records_list.html``, no base layout) with the filter form and cards, so it
+can be re-rendered by both the list form and the edit page after an action.
+The list form's filters (category / product / article_number / status / q)
+drive a re-render of this same partial; ``status=all`` shows every row
+(``status=archived`` included) via the optional status filter in the repo.
+
+The edit page (``GET / POST /ingest/{id}/edit``) is a full page: its GET returns
+the pre-filled edit form and its POST calls the service layer, then redirects
+back to the edit page with the result
+(``?edit=ok`` / ``?edit=duplicate`` / ``?edit=not_found`` / ``?edit=invalid`` /
+``?edit=error``) so the page can surface the message. Archive / Restore
+(``POST /ingest/{id}/archive|restore``) call the service layer and redirect back
+to the current page; they return ``404`` when the record is missing, matching
+the API.
+"""
+
+from __future__ import annotations
+
+import urllib.parse
+from pathlib import Path
+from uuid import UUID
+
+from fastapi import FastAPI, Query, Request
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel
+
+from app.config import settings, taxonomy
+from app.db import _checkout, _release
+from app.taxonomy import (
+    article_numbers_for_product,
+    products_for_category,
+)
+from app.records_repo import (
+    DuplicateError,
+    NotFoundError,
+    RecordIn,
+    Scope,
+    get,
+    list_records,
+)
+from app.records_service import (
+    InvalidTaxonomyError,
+    archive_record,
+    restore_record,
+    update_record,
+)
+
+# Templates live directly under ``templates/``.
+_TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
+_STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
+
+templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
+"""The shared Jinja2 template engine (``templates/``)."""
+
+# ``lang`` cookie name — the session language lives in a cookie so the server can
+# server-render the active-language labels and the JS can read it on load.
+_LANG_COOKIE = "lang"
+
+
+def _lang_from_request(request: Request) -> str:
+    """Return the session language (``sv`` by default), from cookie then settings."""
+    cookie = request.cookies.get(_LANG_COOKIE)
+    if cookie in ("sv", "en"):
+        return cookie
+    default = settings.ui.lang_default
+    return default if default in ("sv", "en") else "sv"
+
+
+class TaxonomyItem(BaseModel):
+    """A single taxonomy member — one product or one article number."""
+
+    id: str
+    label_sv: str
+    label_en: str
+
+
+class TaxonomyProductsResult(BaseModel):
+    """Body of ``GET /api/taxonomy/products?category=<id>`` (empty for unknown category)."""
+
+    items: list[TaxonomyItem] = []
+
+
+class TaxonomyArticlesResult(BaseModel):
+    """Body of ``GET /api/taxonomy/articles?category=&product=<id>`` (empty for unknown pair)."""
+
+    items: list[TaxonomyItem] = []
+
+
+class TaxonomyCategoriesResult(BaseModel):
+    """Body of ``GET /api/taxonomy/categories`` — all top-level categories in config order."""
+
+    items: list[TaxonomyItem] = []
+
+
+def create_app() -> FastAPI:
+    """Build and return the WebUI application (``uvicorn app.webui:app``).
+
+    Mounts the static assets, the Jinja2 templates and the stage/nav/lang routes
+    (see the CONTRACT.md §12 route table — only the T5.1 surface is mounted here).
+    """
+    app = FastAPI(title="F&S WebUI", version="0.1.0")
+    app.exception_handler(NotFoundError)(_on_not_found)
+
+    app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
+
+    @app.get("/")
+    def root() -> RedirectResponse:
+        """Bare root lands on the Submit stage."""
+        return RedirectResponse(url="/ingest", status_code=302)
+
+    @app.get("/ingest", response_class=HTMLResponse)
+    def ingest(request: Request) -> HTMLResponse:
+        """Render the Submit form on the shared base layout (§3, §1)."""
+        return templates.TemplateResponse(
+            request,
+            "submit.html",
+            {"lang": _lang_from_request(request)},
+        )
+
+    @app.get("/chat", response_class=HTMLResponse)
+    def chat_page(request: Request) -> HTMLResponse:
+        """Render the Troubleshooting form on the shared base layout (§4, §1)."""
+        return templates.TemplateResponse(
+            request,
+            "troubleshooting.html",
+            {"lang": _lang_from_request(request)},
+        )
+
+    @app.post("/lang")
+    def set_lang(request: Request) -> RedirectResponse:
+        """Set the session language (``sv``/``en``) and re-render the current page.
+
+        The language is read from the request body (``{"lang": "en"}``), from the
+        cookie, or falls back to the configured default (§5).
+        """
+        lang = _lang_from_post(request)
+        response = RedirectResponse(
+            url=request.url.path, status_code=303
+        )
+        response.set_cookie(_LANG_COOKIE, lang, max_age=60 * 60 * 24 * 365, path="/")
+        return response
+
+    # --- Record list (T5.4: /ingest/list) ---------------------------------- #
+
+    @app.get("/ingest/list", response_class=HTMLResponse)
+    def record_list(
+        request: Request,
+        category: str = "",
+        product: str = "",
+        article_number: str = "",
+        status: str = "active",
+        q: str = "",
+    ) -> HTMLResponse:
+        """Render the record list partial (filters + cards).
+
+        Filters drive a re-render of this partial. ``category`` / ``product`` /
+        ``article_number`` are ``""`` (sent as ``None`` to the repo) unless the
+        user picks a value; ``status`` is ``active`` / ``archived`` / ``all``.
+        """
+        conn = _checkout()
+        try:
+            items, count = list_records(
+                conn,
+                Scope(
+                    category=category or None,
+                    product=product or None,
+                    article_number=article_number or None,
+                ),
+                status if status in ("active", "archived") else "",
+                q or None,
+                limit=200,
+                offset=0,
+            )
+        finally:
+            _release(conn)
+        return templates.TemplateResponse(
+            request,
+            "records_list.html",
+            {
+                "lang": _lang_from_request(request),
+                "items": items,
+                "count": count,
+                "filters": {
+                    "category": category or None,
+                    "product": product or None,
+                    "article_number": article_number or None,
+                    "status": status,
+                    "q": q,
+                },
+                "categories": _categories_for_select(taxonomy),
+            },
+        )
+
+    # --- Edit / archive / restore (T5.4) ------------------------------------ #
+
+    @app.get("/ingest/{record_id}/edit", response_class=HTMLResponse)
+    def edit_form(
+        request: Request, record_id: UUID, lang: str = ""
+    ) -> HTMLResponse:
+        """Render the pre-filled edit form; 404 when the record is missing."""
+        conn = _checkout()
+        try:
+            record = get(conn, record_id)
+            if record is None:
+                conn.rollback()
+                raise NotFoundError(str(record_id))
+        finally:
+            _release(conn)
+        return templates.TemplateResponse(
+            request,
+            "edit.html",
+            {
+                "lang": lang or _lang_from_request(request),
+                "record": record,
+                "categories": _categories_for_select(taxonomy),
+            },
+        )
+
+    @app.post("/ingest/{record_id}/edit")
+    async def edit_save(request: Request, record_id: UUID) -> RedirectResponse:
+        """Save an edited record; redirect back to the edit page with the result.
+
+        A valid edit redirects ``?edit=ok``; a duplicate, missing record, invalid
+        taxonomy or failure is surfaced as ``?edit=duplicate`` / ``?edit=not_found``
+        / ``?edit=invalid`` / ``?edit=error``. The edit page renders the message
+        and re-pre-fills the form from the saved value where possible.
+        """
+        # Re-fetch the record (with rollback safety) before mutating so a
+        # missing id always redirects to ?edit=not_found rather than 500.
+        try:
+            body = await request.form()
+        except Exception:  # noqa: BLE001 - fall through to the 422/invalid path
+            return _edit_redirect(record_id, "invalid")
+
+        try:
+            payload = RecordIn(
+                category=str(body.get("category", "")),
+                product=str(body.get("product", "")),
+                article_number=body.get("article_number") or None,
+                failure_description=str(body.get("failure_description", "")),
+                solution_description=str(body.get("solution_description", "")),
+                ncr=body.get("ncr") or None,
+                bug_record_number=body.get("bug_record_number") or None,
+                source="manual",
+            )
+        except Exception:  # noqa: BLE001 - malformed -> invalid
+            return _edit_redirect(record_id, "invalid")
+
+        try:
+            updated = update_record(record_id, payload, actor="web")
+            return RedirectResponse(
+                url=f"/ingest/{updated.id}/edit?edit=ok", status_code=303
+            )
+        except DuplicateError:
+            return _edit_redirect(record_id, "duplicate")
+        except InvalidTaxonomyError:
+            return _edit_redirect(record_id, "invalid")
+        except FileNotFoundError:
+            return _edit_redirect(record_id, "not_found")
+        except Exception:  # noqa: BLE001 - surface as a generic edit error
+            return _edit_redirect(record_id, "error")
+
+    @app.post("/ingest/{record_id}/archive")
+    def save_archive(request: Request, record_id: UUID) -> RedirectResponse:
+        """Soft-archive a record; redirect back to the caller. 404 when missing."""
+        try:
+            archive_record(record_id, actor="web")
+        except FileNotFoundError:
+            raise NotFoundError(str(record_id))
+        return _back_redirect(request)
+
+    @app.post("/ingest/{record_id}/restore")
+    def save_restore(request: Request, record_id: UUID) -> RedirectResponse:
+        """Restore an archived record; redirect back to the caller. 404 when missing.
+
+        A restore that now collides with another active record is reported as
+        ``?restore=collided`` so the caller can explain the conflict; anything
+        else surfaces as ``?restore=error``.
+        """
+        try:
+            restore_record(record_id, actor="web")
+        except FileNotFoundError:
+            raise NotFoundError(str(record_id))
+        except DuplicateError:
+            return RedirectResponse(
+                url=_referer(request) + "?restore=collided", status_code=303
+            )
+        except Exception:  # noqa: BLE001
+            return RedirectResponse(
+                url=_referer(request) + "?restore=error", status_code=303
+            )
+        return _back_redirect(request)
+
+    # --- Taxonomy cascade (WEBUI.md §2) ---
+    # These JSON endpoints feed the category→product→article_number selects on the
+    # submit/chat pages. They mirror the same surfaces the API exposes on :9000, so
+    # the WebUI app on :9001 can populate its own selects without a cross-service call.
+
+    @app.get(
+        "/api/taxonomy/categories",
+        status_code=200,
+        responses={200: {"model": "TaxonomyCategoriesResult"}},
+    )
+    def taxonomy_categories() -> TaxonomyCategoriesResult:
+        """All top-level categories (WebUI cascade) — config order."""
+        return TaxonomyCategoriesResult(
+            items=[
+                TaxonomyItem(
+                    id=category.id,
+                    label_sv=category.label_sv,
+                    label_en=category.label_en,
+                )
+                for category in taxonomy.categories
+            ]
+        )
+
+    @app.get(
+        "/api/taxonomy/products",
+        status_code=200,
+        responses={200: {"model": "TaxonomyProductsResult"}},
+    )
+    def taxonomy_products(category: str = Query(...)) -> TaxonomyProductsResult:
+        """Products for ``category`` (WebUI cascade) — config order, empty if unknown."""
+        return TaxonomyProductsResult(
+            items=[
+                TaxonomyItem(
+                    id=product.id,
+                    label_sv=product.label_sv,
+                    label_en=product.label_en,
+                )
+                for product in products_for_category(category)
+            ]
+        )
+
+    @app.get(
+        "/api/taxonomy/articles",
+        status_code=200,
+        responses={200: {"model": "TaxonomyArticlesResult"}},
+    )
+    def taxonomy_articles(
+        request: Request,
+        category: str = Query(...),
+        product: str = Query(...),
+    ) -> TaxonomyArticlesResult:
+        """Article numbers for ``product`` (WebUI cascade) — empty if unknown.
+
+        Each option carries the product's chosen-language label (WEBUI §3.2) rather
+        than the raw article number.
+        """
+        label = _product_label(request, category, product)
+        return TaxonomyArticlesResult(
+            items=[
+                TaxonomyItem(id=art, label_sv=label, label_en=label)
+                for art in article_numbers_for_product(category, product)
+            ]
+        )
+
+    return app
+
+
+def _lang_from_post(request: Request) -> str:
+    """Resolve the requested language from a JSON body, a cookie, or the default.
+
+    ``POST /lang`` may be called with a JSON ``{"lang": ...}`` body; when the body
+    is absent (e.g. the client only set the cookie) the cookie value is used.
+    """
+    body = None
+    try:
+        body = request.json()
+    except Exception:  # noqa: BLE001 - non-JSON body, fall through to cookie
+        pass
+    if isinstance(body, dict):
+        candidate = body.get("lang")
+        if candidate in ("sv", "en"):
+            return candidate
+    return _lang_from_request(request)
+
+
+def _categories_for_select(taxonomy: object) -> list[dict]:
+    """Return the taxonomy categories as ``{id, label}`` (language-selected).
+
+    Used to populate the category <select> in both the list filter and the edit
+    form. Labels are chosen from the active session language so the dropdowns
+    render in the user's language without a client-side i18n table.
+    """
+    lang = "sv"
+    return [
+        {"id": category.id, "label": getattr(category, f"label_{lang}")}
+        for category in taxonomy.categories
+    ]
+
+
+def _back_redirect(request: Request) -> RedirectResponse:
+    """Redirect back to the referring page (the list filter form) after an action."""
+    return RedirectResponse(url=_referer(request) or "/ingest/list", status_code=303)
+
+
+def _referer(request: Request) -> str:
+    """Return the referring page's path + query (filters intact), or the list.
+
+    Archive/Restore redirect back to the caller. The referer is a full URL in
+    the ``Referer`` header; we parse out its path + query so the list filter
+    form (which carries its filters as query params) re-renders with the same
+    filters. Any ``?edit=`` / ``?restore=`` status flag left on the query is
+    dropped so a successful action is clean.
+    """
+    ref = request.headers.get("referer")
+    if not ref:
+        return "/ingest/list"
+    try:
+        parts = urllib.parse.urlparse(ref)
+    except ValueError:
+        return "/ingest/list"
+    path = parts.path or "/ingest/list"
+    flags = {"edit", "restore"}
+    query = urllib.parse.parse_qs(parts.query)
+    query = {k: v for k, v in query.items() if k not in flags}
+    rebuilt = urllib.parse.urlencode(query, doseq=True)
+    return f"{path}?{rebuilt}" if rebuilt else path
+
+
+def _edit_redirect(record_id: UUID, outcome: str) -> RedirectResponse:
+    """Redirect to the edit page with the given ``?edit=`` outcome flag.
+
+    Success and every error surface here so the edit page renders the message and
+    re-pre-fills the form; never the list, which would drop the flag.
+    """
+    return RedirectResponse(
+        url=f"/ingest/{record_id}/edit?edit={outcome}", status_code=303
+    )
+
+
+def _product_label(
+    request: Request, category: str, product: str
+) -> str:
+    """Return the chosen-language label for ``product`` (WEBUI §3.2).
+
+    The article <select> has no per-article label of its own, so every option in a
+    product's group inherits the product's label — in the request's language. The
+    list is neutral (the product id) when the pair is unknown.
+    """
+    lang = _lang_from_request(request)
+    for candidate in products_for_category(category):
+        if candidate.id == product:
+            return candidate.label_en if lang == "en" else candidate.label_sv
+    return product
+
+
+def _on_not_found(request: Request, exc: NotFoundError) -> JSONResponse:
+    """Map a missing record to ``404 not_found`` (archive/restore 404s)."""
+    return JSONResponse(status_code=404, content={"error": {"code": "not_found"}})
+
+
+app = create_app()

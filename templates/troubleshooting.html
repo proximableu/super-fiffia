@@ -1,0 +1,623 @@
+{% extends "base.html" %}
+{% block title %}F&S — Felsökning{% endblock %}
+{% block content %}
+<style>
+        :root {
+            --bg: #0f1420;
+            --panel: #1b2233;
+            --panel-2: #232c41;
+            --text: #e6e9f0;
+            --muted: #9aa6bd;
+            --accent: #3f8efc;
+            --success: #2ec27e;
+            --error: #f15d6a;
+            --border: #2c3548;
+            --radius: 10px;
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.5;
+        }
+        .wrap { max-width: 900px; margin: 0 auto; padding: 32px 20px 64px; }
+        header.page-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 24px;
+        }
+        header.page-head h1 { font-size: 22px; margin: 0; }
+        .hint { color: var(--muted); font-size: 14px; margin-top: 4px; }
+
+        .panel {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 20px;
+            margin-bottom: 16px;
+        }
+        .panel h2 { font-size: 15px; margin: 0 0 16px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+
+        label.field { display: block; margin-bottom: 16px; }
+        label.field .lbl { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+        label.field .lbl .req { color: var(--error); }
+        select, input, textarea {
+            width: 100%;
+            background: var(--panel-2);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text);
+            padding: 10px 12px;
+            font-size: 15px;
+            font-family: inherit;
+        }
+        textarea { resize: vertical; min-height: 84px; }
+        select:focus, input:focus, textarea:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgba(63, 142, 252, 0.2);
+        }
+        .row { display: flex; gap: 16px; flex-wrap: wrap; }
+        .row .field { flex: 1 1 200px; }
+
+        /* Conversation area (§4.1) */
+        .conversation {
+            background: var(--panel-2);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            height: 420px;
+            overflow-y: auto;
+            padding: 16px;
+        }
+        .message { margin-bottom: 14px; display: flex; flex-direction: column; max-width: 78%; }
+        .message.user { align-self: flex-end; align-items: flex-end; }
+        .message.assistant { align-self: flex-start; align-items: flex-start; }
+        .message .bubble {
+            padding: 10px 14px;
+            border-radius: 12px;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        .message.user .bubble { background: var(--accent); color: #fff; border-bottom-right-radius: 3px; }
+        .message.assistant .bubble { background: var(--panel); border: 1px solid var(--border); border-bottom-left-radius: 3px; }
+        .message .meta { font-size: 11px; color: var(--muted); margin: 3px 0 2px; }
+        .sources { margin-top: 8px; font-size: 12px; }
+        .sources .sources-title { color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; }
+        .sources ul { margin: 0; padding-left: 16px; }
+        .sources li { margin-bottom: 3px; }
+        .sources .hit-kind { color: var(--accent); }
+        .empty-hint { color: var(--muted); font-size: 14px; text-align: center; padding: 40px 0; }
+
+        .composer { display: flex; gap: 12px; align-items: flex-start; margin-top: 12px; }
+        .composer textarea { flex: 1; min-height: 44px; max-height: 200px; }
+        .composer .send-btn {
+            flex: 0 0 auto;
+            border: none;
+            border-radius: 8px;
+            padding: 11px 22px;
+            font-size: 15px;
+            font-family: inherit;
+            background: var(--accent);
+            color: #fff;
+            cursor: pointer;
+            height: 44px;
+        }
+        .composer .send-btn:disabled { opacity: 0.6; cursor: default; }
+
+        button.action {
+            border: none;
+            border-radius: 8px;
+            padding: 11px 20px;
+            font-size: 15px;
+            font-family: inherit;
+            cursor: pointer;
+        }
+        button.action.secondary { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); }
+        button.action.secondary:disabled { opacity: 0.6; cursor: default; }
+
+        .spinner {
+            width: 14px; height: 14px;
+            border: 2px solid rgba(63, 142, 252, 0.35);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            display: inline-block;
+            animation: spin 0.7s linear infinite;
+            vertical-align: -2px;
+            margin-right: 8px;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        .indicator {
+            min-height: 22px;
+            font-size: 14px;
+            margin-top: 14px;
+            padding: 0;
+            transition: color 0.15s ease;
+        }
+        .indicator.error {
+            color: var(--error);
+            font-weight: 700;
+            background: rgba(241, 93, 106, 0.16);
+            border: 1px solid var(--error);
+            border-radius: 8px;
+            padding: 10px 12px;
+        }
+        .indicator .id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+
+        .lang-toggle { display: flex; gap: 4px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+        .lang-toggle button {
+            background: transparent;
+            border: none;
+            color: var(--muted);
+            padding: 6px 10px;
+            cursor: pointer;
+            font-size: 13px;
+            font-family: inherit;
+        }
+        .lang-toggle button.active { background: var(--accent); color: #fff; }
+    </style>
+    <div class="wrap">
+        <header class="page-head">
+            <div>
+                <h1 data-i18n="title">Felsökning</h1>
+                <p class="hint" data-i18n="subtitle">Ställ en fråga om produktfel; agenten söker i poster och dokument.</p>
+            </div>
+        </header>
+
+        <!-- Context header (§4.1): the cascade + failure_description scope retrieval. -->
+        <form id="context-form" novalidate>
+            <div class="panel">
+                <h2 data-i18n="contextHeading">Kontext (scoping)</h2>
+
+                <div class="row">
+                    <label class="field">
+                        <span class="lbl" data-i18n="category">Kategori <span class="req">*</span></span>
+                        <select id="category" name="category">
+                            <option value="" selected disabled>——</option>
+                        </select>
+                    </label>
+
+                    <label class="field">
+                        <span class="lbl" data-i18n="product">Produkt <span class="req">*</span></span>
+                        <select id="product" name="product">
+                            <option value="" selected disabled>——</option>
+                        </select>
+                    </label>
+
+                    <label class="field">
+                        <span class="lbl" data-i18n="articleNumber">Artikelnr</span>
+                        <select id="article_number" name="article_number">
+                            <option value="" selected disabled>——</option>
+                        </select>
+                    </label>
+                </div>
+
+                <label class="field">
+                    <span class="lbl" data-i18n="failure">Felbeskrivning <span class="req">*</span></span>
+                    <textarea id="failure_description" name="failure_description"
+                              data-i18n-placeholder="failurePlaceholder"
+                              placeholder="Beskriv felet som frågan gäller …"></textarea>
+                </label>
+            </div>
+        </form>
+
+        <!-- Chat subform (§4.1): conversation area + message input + Send. -->
+        <div class="panel">
+            <h2 data-i18n="chatHeading">Samtal</h2>
+            <div id="conversation" class="conversation">
+                <p class="empty-hint" data-i18n="emptyChat">Inga meddelanden än. Skriv en fråga nedan.</p>
+            </div>
+
+            <div class="composer">
+                <textarea id="chat-input" name="user_message"
+                          data-i18n-placeholder="chatPlaceholder"
+                          placeholder="Skriv ditt meddelande …"></textarea>
+                <button type="button" class="send-btn" id="send-btn" data-i18n="send">Skicka</button>
+            </div>
+
+            <!-- Busy indicator shown on the blocking Send POST (§4.4: progress). -->
+            <div id="chat-busy" class="indicator" hidden role="status" aria-live="polite"></div>
+            <div id="indicator" class="indicator" role="status" aria-live="polite"></div>
+        </div>
+
+        <div class="actions" style="display:flex; gap:12px; align-items:center; margin-top:8px;">
+            <button type="button" class="action secondary" id="clear-btn" data-i18n="clear">Rensa</button>
+        </div>
+    </div>
+{% endblock %}
+{% block scripts %}
+    <script>
+    (function () {
+        "use strict";
+
+        // --- i18n labels. Server (POST /lang) is the source of truth for the
+        // agent language; this table keeps the labels in sync without a
+        // round-trip so the standalone page works on its own.
+        var I18N = {
+            sv: {
+                title: "Felsökning",
+                subtitle: "Ställ en fråga om ett produktfel; agenten söker i poster och dokument.",
+                contextHeading: "Kontext (scoping)",
+                category: "Kategori <span class=\"req\">*</span>",
+                product: "Produkt <span class=\"req\">*</span>",
+                articleNumber: "Artikelnr",
+                failure: "Felbeskrivning <span class=\"req\">*</span>",
+                failureField: "Felbeskrivning",
+                chatHeading: "Samtal",
+                emptyChat: "Inga meddelanden än. Skriv en fråga nedan.",
+                chatPlaceholder: "Skriv ditt meddelande …",
+                failurePlaceholder: "Beskriv felet som frågan gäller …",
+                send: "Skicka",
+                clear: "Rensa",
+                progress: "Agenten tänker…",
+                error: "Något gick fel. Försök igen.",
+                missing: "Vänligen fyll i: {fields}",
+                sources: "Källor"
+            },
+            en: {
+                title: "Troubleshooting",
+                subtitle: "Ask a question about a product failure; the agent searches records and documentation.",
+                contextHeading: "Context (scoping)",
+                category: "Category <span class=\"req\">*</span>",
+                product: "Product <span class=\"req\">*</span>",
+                articleNumber: "Article number",
+                failure: "Failure description <span class=\"req\">*</span>",
+                failureField: "Failure description",
+                chatHeading: "Conversation",
+                emptyChat: "No messages yet. Type a question below.",
+                chatPlaceholder: "Type your message …",
+                failurePlaceholder: "Describe the failure the question is about …",
+                send: "Send",
+                clear: "Clear",
+                progress: "Agent is thinking…",
+                error: "Something went wrong. Please retry.",
+                missing: "Please fill in: {fields}",
+                sources: "Sources"
+            }
+        };
+
+        var LANG = "sv";
+        var SESSION_KEY = "fs_chat_session";
+
+        // The context header scopes retrieval; the failure description is the first
+        // query. Both are read from the context form on every Send.
+        var contextEl = {
+            category: document.getElementById("category"),
+            product: document.getElementById("product"),
+            article_number: document.getElementById("article_number"),
+            failure_description: document.getElementById("failure_description")
+        };
+        var conversationEl = document.getElementById("conversation");
+        var inputEl = document.getElementById("chat-input");
+        var sendBtn = document.getElementById("send-btn");
+        var clearBtn = document.getElementById("clear-btn");
+        var busy = document.getElementById("chat-busy");
+        var indicator = document.getElementById("indicator");
+
+        // In-memory conversation for local rendering; the server keeps the
+        // authoritative history keyed by the session token.
+        var _renderedTurns = [];
+
+        // --- helpers -----------------------------------------------------------
+
+        function setLabel(key) {
+            var node = document.querySelector("[data-i18n='" + key + "']");
+            if (node) node.innerHTML = I18N[LANG][key];
+        }
+
+        function setPlaceholder(id, key) {
+            var node = document.getElementById(id);
+            if (node) node.placeholder = I18N[LANG][key];
+        }
+
+        function applyI18n() {
+            ["title", "subtitle", "contextHeading", "category", "product",
+                "articleNumber", "failure", "chatHeading", "emptyChat"].forEach(setLabel);
+            setPlaceholder("chat_input", "chatPlaceholder");
+            setPlaceholder("failure_description", "failurePlaceholder");
+            updateLangButtons();
+        }
+
+        function updateLangButtons() {
+            document.querySelectorAll(".lang-toggle button").forEach(function (btn) {
+                btn.classList.toggle("active", btn.getAttribute("data-lang") === LANG);
+            });
+        }
+
+        function populateSelect(select, items) {
+            var current = select.value;
+            select.innerHTML = "";
+            var def = document.createElement("option");
+            def.value = "";
+            def.disabled = true;
+            def.selected = true;
+            def.textContent = "——";
+            def.setAttribute("aria-placeholder", "true");
+            select.appendChild(def);
+            items.forEach(function (item) {
+                var opt = document.createElement("option");
+                opt.value = item.id;
+                opt.textContent = item[LANG === "en" ? "label_en" : "label_sv"];
+                select.appendChild(opt);
+            });
+            if (current) select.value = current;
+        }
+
+        function setSelectOptions(select, items) {
+            var current = select.value;
+            select.innerHTML = "";
+            var def = document.createElement("option");
+            def.value = "";
+            def.disabled = true;
+            def.selected = true;
+            def.textContent = "——";
+            select.appendChild(def);
+            items.forEach(function (item) {
+                var opt = document.createElement("option");
+                opt.value = item.id;
+                opt.textContent = item[LANG === "en" ? "label_en" : "label_sv"];
+                select.appendChild(opt);
+            });
+            if (current) select.value = current;
+        }
+
+        // --- cascade (§2, §4.1) ------------------------------------------------
+
+        function onCategoryChange() {
+            setSelectOptions(contextEl.product, []);
+            setSelectOptions(contextEl.article_number, []);
+            var cat = contextEl.category.value;
+            if (!cat) return;
+            fetch("/api/taxonomy/products?category=" + encodeURIComponent(cat))
+                .then(function (r) { return r.json(); })
+                .then(function (data) { populateSelect(contextEl.product, data.items); })
+                .catch(function () { /* leave product on default */ });
+        }
+
+        function onProductChange() {
+            setSelectOptions(contextEl.article_number, []);
+            var cat = contextEl.category.value;
+            var prod = contextEl.product.value;
+            if (!cat || !prod) return;
+            fetch(
+                "/api/taxonomy/articles?category=" + encodeURIComponent(cat) +
+                    "&product=" + encodeURIComponent(prod)
+            )
+                .then(function (r) { return r.json(); })
+                .then(function (data) { populateSelect(contextEl.article_number, data.items); })
+                .catch(function () { /* leave article on default */ });
+        }
+
+        // --- session -----------------------------------------------------------
+
+        function sessionId() {
+            var existing = null;
+            try { existing = localStorage.getItem(SESSION_KEY); } catch (e) { /* no storage */ }
+            if (!existing) {
+                existing = "s-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10);
+                try { localStorage.setItem(SESSION_KEY, existing); } catch (e) { /* ignore */ }
+            }
+            return existing;
+        }
+
+        // --- context / request building ---------------------------------------
+
+        function buildScope() {
+            return {
+                category: contextEl.category.value || null,
+                product: contextEl.product.value || null,
+                article_number: contextEl.article_number.value || null,
+                failure_description: contextEl.failure_description.value
+            };
+        }
+
+        // --- conversation rendering (§4.1, §4.3) -------------------------------
+
+        function renderEmptyHint() {
+            var has = conversationEl.querySelector(".message");
+            if (!has) {
+                var p = document.createElement("p");
+                p.className = "empty-hint";
+                p.setAttribute("data-i18n", "emptyChat");
+                p.textContent = I18N[LANG].emptyChat;
+                conversationEl.appendChild(p);
+            }
+        }
+
+        function removeEmptyHint() {
+            var p = conversationEl.querySelector(".empty-hint");
+            if (p) conversationEl.removeChild(p);
+        }
+
+        function sourceText(hit) {
+            if (!hit) return "";
+            if (hit.source === "rag") {
+                var parts = [];
+                if (hit.source_file) parts.push(hit.source_file);
+                if (hit.section_header) parts.push(hit.section_header);
+                return parts.join(" — ") || hit.chunk_text || "";
+            }
+            // records hit
+            var parts = [];
+            if (hit.product) parts.push(hit.product);
+            if (hit.article_number) parts.push(hit.article_number);
+            if (hit.failure_description) parts.push(hit.failure_description);
+            return parts.join(" · ") || "";
+        }
+
+        function addTurn(userContent, answer, sources) {
+            removeEmptyHint();
+
+            var user = document.createElement("div");
+            user.className = "message user";
+            user.innerHTML = '<div class="bubble"></div><div class="meta">' + (LANG === "en" ? "you" : "du") + "</div>";
+            user.querySelector(".bubble").textContent = userContent;
+            conversationEl.appendChild(user);
+
+            var assistant = document.createElement("div");
+            assistant.className = "message assistant";
+            var sourcesHtml = "";
+            if (sources && sources.length) {
+                var items = sources.map(function (s) {
+                    var kind = (s && s.source === "rag") ? (LANG === "en" ? "doc" : "dok") : (LANG === "en" ? "record" : "post");
+                    return "<li><span class='hit-kind'>" + kind + "</span>: " + escapeHtml(sourceText(s)) + "</li>";
+                }).join("");
+                sourcesHtml =
+                    '<div class="sources"><div class="sources-title">' + I18N[LANG].sources + "</div>" +
+                    "<ul>" + items + "</ul></div>";
+            }
+            assistant.innerHTML =
+                '<div class="bubble">' + escapeHtml(answer) + "</div>" + sourcesHtml;
+            conversationEl.appendChild(assistant);
+
+            conversationEl.scrollTop = conversationEl.scrollHeight;
+            _renderedTurns.push({ user: userContent, answer: answer, sources: sources || [] });
+        }
+
+        function escapeHtml(text) {
+            return String(text == null ? "" : text)
+                .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        }
+
+        // --- send --------------------------------------------------------------
+
+        function clientValidate() {
+            var missing = [];
+            if (!contextEl.category.value) missing.push(I18N[LANG].category);
+            if (!contextEl.product.value) missing.push(I18N[LANG].product);
+            if (!contextEl.failure_description.value.trim()) {
+                missing.push(I18N[LANG].failureField);
+            }
+            if (missing.length) {
+                showError(I18N[LANG].missing.replace("{fields}", missing.join(", ")));
+                return null;
+            }
+            return null;
+        }
+
+        function firstQuery() {
+            // The failure description is the first query; follow-ups use the input.
+            return _renderedTurns.length === 0
+                ? contextEl.failure_description.value.trim()
+                : inputEl.value.trim();
+        }
+
+        function showProgress() {
+            busy.hidden = false;
+            busy.innerHTML = "<span class='spinner'></span>" + I18N[LANG].progress;
+            sendBtn.disabled = true;
+        }
+
+        function hideProgress() {
+            busy.hidden = true;
+            busy.innerHTML = "";
+            sendBtn.disabled = false;
+        }
+
+        function showError(message) {
+            indicator.className = "indicator error";
+            indicator.textContent = message || I18N[LANG].error;
+            sendBtn.disabled = false;
+        }
+
+        function send() {
+            var validation = clientValidate();
+            if (validation) return;
+
+            var content = firstQuery();
+            if (!content) {
+                showError(
+                    I18N[LANG].missing
+                        .replace("{fields}", _renderedTurns.length === 0
+                            ? I18N[LANG].failureField
+                            : I18N[LANG].chatPlaceholder)
+                );
+                return;
+            }
+
+            indicator.className = "indicator";
+            indicator.textContent = "";
+            showProgress();
+
+            fetch("/chat", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    scope: buildScope(),
+                    messages: [{ role: "user", content: content }],
+                    lang: LANG,
+                    session_token: sessionId()
+                })
+            })
+                .then(async function (resp) {
+                    hideProgress();
+                    if (resp.status === 200 || resp.status === 201) {
+                        var data = await resp.json().catch(function () { return {}; });
+                        addTurn(content, data.answer || "", data.sources || []);
+                        inputEl.value = "";
+                    } else {
+                        var data = await resp.json().catch(function () { return {}; });
+                        showError((data.error && data.error.message) || I18N[LANG].error);
+                    }
+                })
+                .catch(function () {
+                    hideProgress();
+                    showError(I18N[LANG].error);
+                });
+        }
+
+        // --- clear -------------------------------------------------------------
+
+        function clearConversation() {
+            conversationEl.innerHTML = "";
+            _renderedTurns = [];
+            renderEmptyHint();
+            indicator.className = "indicator";
+            indicator.textContent = "";
+            var token = sessionId();
+            fetch("/chat/clear", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ session_token: token })
+            }).catch(function () { /* clear the local view even if the server misses */ });
+        }
+
+        // --- wiring ------------------------------------------------------------
+
+        contextEl.category.addEventListener("change", onCategoryChange);
+        contextEl.product.addEventListener("change", onProductChange);
+        sendBtn.addEventListener("click", send);
+        clearBtn.addEventListener("click", clearConversation);
+
+        inputEl.addEventListener("keydown", function (event) {
+            // Enter sends the message (Shift+Enter for a newline).
+            if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                send();
+            }
+        });
+
+        document.querySelectorAll(".lang-toggle button").forEach(function (btn) {
+            btn.addEventListener("click", function () {
+                LANG = btn.getAttribute("data-lang");
+                applyI18n();
+            });
+        });
+
+        // --- init --------------------------------------------------------------
+
+        applyI18n();
+        // Fetch the category list on load so the <select> has options before the
+        // product cascade begins; the cascade only fires once a category is picked.
+        fetch("/api/taxonomy/categories")
+            .then(function (r) { return r.json(); })
+            .then(function (data) { populateSelect(contextEl.category, data.items); })
+            .catch(function () { /* leave category on default */ });
+        setSelectOptions(contextEl.product, []);
+        setSelectOptions(contextEl.article_number, []);
+    })();
+    </script>
+{% endblock %}

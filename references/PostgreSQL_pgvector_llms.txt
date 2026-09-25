@@ -1,0 +1,122 @@
+# pgvector
+
+> Open-source vector similarity search extension for PostgreSQL. It enables storing, indexing, and querying high-dimensional vector embeddings alongside traditional relational data.
+
+Official Repository: https://github.com/pgvector/pgvector
+
+## Core Data Types
+
+- **`vector(N)`**: Single-precision floating-point numbers. Supports up to 2,000 dimensions.
+- **`halfvec(N)`**: Half-precision floating-point numbers (FP16). Supports up to 4,000 dimensions. Cuts storage and memory footprint in half.
+- **`sparsevec(N)`**: Sparse vectors optimized for high-dimensional vectors with few non-zero elements. Supports up to 1,000 non-zero elements out of 16,000 dimensions maximum.
+- **`bit(N)`**: Binary vectors optimized for binary quantization. Supports up to 64,000 dimensions.
+
+## Distance Operators & Operator Classes
+
+When performing queries or creating indexes, pair the correct distance operator with its matching operator class.
+
+| Metric | Operator | Vector Operator Class | Halfvec Operator Class | Sparsevec Operator Class |
+| :--- | :--- | :--- | :--- | :--- |
+| **L2 (Euclidean)** | `<->` | `vector_l2_ops` | `halfvec_l2_ops` | `sparsevec_l2_ops` |
+| **Cosine Distance** | `<=>` | `vector_cosine_ops` | `halfvec_cosine_ops` | `sparsevec_cosine_ops` |
+| **Inner Product** | `<#>` | `vector_ip_ops` | `halfvec_ip_ops` | `sparsevec_ip_ops` |
+| **L1 (Manhattan)** | `<+>` | `vector_l1_ops` | `halfvec_l1_ops` | `sparsevec_l1_ops` |
+| **Hamming (Bit)** | `<~>` | `bit_hamming_ops` | — | — |
+| **Jaccard (Bit)** | `<%>` | `bit_jaccard_ops` | — | — |
+
+> **Note on Inner Product (`<#>`):** This operator returns the *negative* inner product (e.g., `-1.25`). This is a structural design choice because PostgreSQL index scans only support ascending (`ASC`) sort orders.
+
+## Indexing (Approximate Nearest Neighbor)
+
+To optimize similarity search across large datasets, use an Approximate Nearest Neighbor (ANN) index. 
+
+### HNSW (Hierarchical Navigable Small World)
+A graph-based index offering exceptional query speed-recall trade-offs. It can be built safely on empty tables.
+- **Creation Syntax**:
+  ```sql
+  CREATE INDEX ON items USING hnsw (embedding vector_cosine_ops);
+
+```
+
+* **Index Options**:
+* `m`: Maximum number of connections per layer (default: `16`).
+* `ef_construction`: Candidate list size for graph building (default: `64`).
+
+
+* **Tuning**: Boost `maintenance_work_mem` prior to creation (e.g., `SET maintenance_work_mem = '4GB';`) to prevent the graph construction from thrashing to disk.
+
+### IVFFlat (Inverted File Flat)
+
+An inverted file index that partitions vectors into discrete lists. It features faster build times and a lower memory footprint than HNSW but lower overall query recall performance.
+
+* **Creation Syntax**:
+```sql
+CREATE INDEX ON items USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+
+```
+
+
+* **Tuning Rules**:
+* **Lists Selection**: Use `rows / 1000` for tables under 1 million rows, and `sqrt(rows)` for over 1 million rows.
+* **Probes Modification**: Set `ivfflat.probes` at query time (e.g., `SET ivfflat.probes = 10;`). Higher values improve recall at the expense of query speed.
+
+
+
+## Common SQL Patterns
+
+### Initialization & Table Schema
+
+```sql
+-- Enable the extension (once per database)
+CREATE EXTENSION IF NOT EXISTS vector;
+
+-- Create a table with an embedding column
+CREATE TABLE articles (
+    id bigserial PRIMARY KEY,
+    title text NOT NULL,
+    content text NOT NULL,
+    embedding vector(1536) -- Matches standard LLM output sizes
+);
+
+```
+
+### Inserting Data
+
+```sql
+INSERT INTO articles (title, content, embedding) 
+VALUES ('Postgres Basics', 'Relational data rules...', '[0.012, -0.023, 0.451, ...]'),
+       ('Vector Intro', 'Embeddings are clean...', '[0.089, 0.121, -0.005, ...]');
+
+```
+
+### Querying Neighbors (K-NN Search)
+
+```sql
+-- Querying the top 5 closest items by Cosine Similarity
+SELECT id, title, 1 - (embedding <=> '[0.015, -0.021, 0.400, ...]') AS similarity
+FROM articles
+ORDER BY embedding <=> '[0.015, -0.021, 0.400, ...]'
+LIMIT 5;
+
+```
+
+### Hybrid Querying with Metadata Filters
+
+```sql
+-- Combines standard relational filters with vector ordering
+SELECT * FROM articles 
+WHERE created_at > NOW() - INTERVAL '30 days'
+ORDER BY embedding <=> '[0.015, -0.021, 0.400, ...]'
+LIMIT 10;
+
+```
+
+## Built-in Functions & Transforms
+
+* `binary_quantize(vector) -> bit`: Quantizes a floating-point vector into a binary vector to reduce memory size up to 95%.
+* `l2_normalize(vector) -> vector`: Normalizes vectors to a Euclidean length of 1. If vectors are pre-normalized, the Inner Product (`<#>`) operator can be used to execute similarity searches significantly faster.
+* `vector_dims(vector) -> integer`: Returns the dimension count of a given vector column.
+* `subvector(vector, start, count) -> vector`: Extracts a specific range of values from an existing vector.
+* `avg(vector) -> vector`: Aggregate function to compute the average vector across filtered rows.
+
+```

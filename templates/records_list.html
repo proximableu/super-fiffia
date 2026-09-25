@@ -1,0 +1,293 @@
+{# Bare partial (no base layout) for GET /ingest/list — the filterable record
+   list (§3.5). It is swapped into #record-list on the /ingest page and
+   re-rendered by the filter form. The markup is intentionally self-contained so
+   the partial also renders correctly when fetched directly via fetch().
+
+   Context (app.webui.record_list):
+     items       – list[RecordOut]
+     count       – total matching rows (int)
+     filters     – {category, product, article_number, status, q}
+     categories  – list[{id, label}]
+     lang        – "sv" | "en"
+   #}
+{% set items = items or [] %}
+{% set filters = filters or {} %}
+{% set count = count if count is not none else items|length %}
+{% set status = filters.status or "active" %}
+
+<style>
+.list-filter .filters { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
+.list-filter .filters .field { flex: 1 1 130px; }
+.list-filter .row { flex: 2 1 260px; }
+.filter-submit { flex: 0 0 auto; }
+.list-filter select, .list-filter input {
+    min-height: 38px; font-size: 14px; padding: 8px 10px;
+}
+.list-count { margin: 6px 0 12px; color: var(--muted); font-size: 13px; }
+.cards { display: flex; flex-direction: column; gap: 12px; }
+.card {
+    background: #fff;
+    border: 1px solid #d4d7de;
+    border-radius: 10px;
+    padding: 16px;
+}
+.card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 10px; }
+.tags { display: flex; gap: 6px; flex-wrap: wrap; }
+.tag {
+    font-size: 11px; color: #5b6675; background: #eef1f6;
+    border: 1px solid #dfe3ea; border-radius: 20px; padding: 2px 10px;
+}
+.status-pill {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;
+    padding: 3px 10px; border-radius: 20px; border: 1px solid #dfe3ea;
+    color: #5b6675; background: #eef1f6; white-space: nowrap;
+}
+.card-failure { font-size: 15px; margin-bottom: 8px; white-space: pre-wrap; }
+.card-solution { font-size: 14px; color: #5b6675; white-space: pre-wrap; margin-bottom: 10px; }
+.card-solution span { color: #1f9d55; }
+.card-meta { display: flex; gap: 12px; font-size: 12px; color: #5b6675; margin-bottom: 12px; }
+.card-meta .id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.card-actions { display: flex; gap: 12px; align-items: center; }
+.btn {
+    border: none; border-radius: 8px; padding: 8px 14px; font-size: 14px;
+    font-family: inherit; font-weight: 600; cursor: pointer;
+}
+.btn.link { background: transparent; color: #2f6fd6; text-decoration: none; }
+.btn.link:hover { text-decoration: underline; }
+.btn.ghost {
+    background: transparent; border: 1px solid #dfe3ea; color: #5b6675;
+    padding: 8px 12px;
+}
+.btn.danger { background: #fdeaea; color: #cf3030; border: 1px solid #f2c2c2; }
+.btn.danger:hover { opacity: 0.85; }
+.empty { color: #5b6675; font-size: 14px; padding: 24px 0; }
+</style>
+
+{% if count %}
+<p class="list-count" data-i18n-resultcount data-count="{{ count }}">{{ count }} resultat</p>
+{% endif %}
+
+<form id="list-filter" class="list-filter" novalidate>
+    <div class="filters">
+        <label class="field">
+            <span class="lbl" data-i18n="category">Kategori</span>
+            <select id="filter-category" name="category" data-i18n-aria-placeholder="categoryPlaceholder">
+                <option value="" selected disabled>——</option>
+                {% for c in categories %}
+                <option value="{{ c.id }}"{{ " selected" if filters.category == c.id }}>{{ c.label }}</option>
+                {% endfor %}
+            </select>
+        </label>
+
+        <label class="field">
+            <span class="lbl" data-i18n="product">Produkt</span>
+            <select id="filter-product" name="product"></select>
+        </label>
+
+        <label class="field">
+            <span class="lbl" data-i18n="articleNumber">Artikelnr</span>
+            <select id="filter-article_number" name="article_number"></select>
+        </label>
+
+        <label class="field">
+            <span class="lbl" data-i18n="status">Status</span>
+            <select id="filter-status" name="status">
+                <option value="active"{{ " selected" if status == "active" }}>Aktiv</option>
+                <option value="archived"{{ " selected" if status == "archived" }}>Arkiverad</option>
+                <option value="all"{{ " selected" if status == "all" }}>Alla</option>
+            </select>
+        </label>
+
+        <div class="row">
+            <label class="field">
+                <span class="lbl" data-i18n="search">Sök</span>
+                <input id="filter-q" name="q" type="search" value="{{ filters.q }}"
+                       data-i18n-placeholder="searchPlaceholder" />
+            </label>
+            <div class="filter-submit">
+                <button type="submit" class="btn primary" data-i18n="apply">Tillämpa</button>
+            </div>
+        </div>
+    </div>
+</form>
+
+{% if items %}
+<div class="cards">
+    {% for item in items %}
+    <div class="card">
+        <div class="card-head">
+            <span class="tags">
+                <span class="tag">{{ item.category }}</span>
+                <span class="tag">{{ item.product }}</span>
+                {% if item.article_number %}<span class="tag">{{ item.article_number }}</span>{% endif %}
+            </span>
+            <span class="status-pill" data-i18n-status="{{ item.status }}">{{ item.status }}</span>
+        </div>
+        <div class="card-failure">{{ item.failure_description }}</div>
+        {% if item.solution_description %}
+        <div class="card-solution"><span data-i18n="solution">Lösning:</span> {{ item.solution_description }}</div>
+        {% endif %}
+        <div class="card-meta">
+            <span>{{ item.created_at.strftime('%Y-%m-%d') }}</span>
+            <span class="id">#{{ item.id }}</span>
+        </div>
+        <div class="card-actions">
+            <a class="btn link" href="/ingest/{{ item.id }}/edit" data-i18n="edit">Redigera</a>
+            {% if item.status == "active" %}
+            <form method="post" action="/ingest/{{ item.id }}/archive"
+                  class="card-archive"
+                  onsubmit="return confirm('{{ 'Arkivera denna post?' if lang == 'sv' else 'Archive this record?' }}')">
+                <button type="submit" class="btn danger" data-i18n="archive">Arkivera</button>
+            </form>
+            {% else %}
+            <form method="post" action="/ingest/{{ item.id }}/restore"
+                  class="card-restore"
+                  onsubmit="return confirm('{{ 'Återställ denna post?' if lang == 'sv' else 'Restore this record?' }}')">
+                <button type="submit" class="btn ghost" data-i18n="restore">Återställ</button>
+            </form>
+            {% endif %}
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<p class="empty" data-i18n="noResults">Inga poster.</p>
+{% endif %}
+
+<script>
+(function () {
+    "use strict";
+
+    // Self-contained i18n for the partial. Runs on every swap so labels and the
+    // taxonomy cascade stay in sync when the shared language selector changes.
+    var I18N = {
+        sv: {
+            category: "Kategori",
+            product: "Produkt",
+            articleNumber: "Artikelnr",
+            status: "Status",
+            search: "Sök",
+            searchPlaceholder: "Sök i text …",
+            apply: "Tillämpa",
+            noResults: "Inga poster.",
+            solution: "Lösning:",
+            edit: "Redigera",
+            archive: "Arkivera",
+            restore: "Återställ"
+        },
+        en: {
+            category: "Category",
+            product: "Product",
+            articleNumber: "Article number",
+            status: "Status",
+            search: "Search",
+            searchPlaceholder: "Search text …",
+            apply: "Apply",
+            noResults: "No records.",
+            solution: "Solution:",
+            edit: "Edit",
+            archive: "Archive",
+            restore: "Restore"
+        }
+    };
+
+    var LANG = "{{ lang }}";
+    if (LANG !== "en") LANG = "sv";
+
+    function t(key) {
+        return I18N[LANG][key] || key;
+    }
+
+    var categoryEl = document.getElementById("filter-category");
+    var productEl = document.getElementById("filter-product");
+    var articleEl = document.getElementById("filter-article_number");
+    var qEl = document.getElementById("filter-q");
+    var filterForm = document.getElementById("list-filter");
+
+    // --- taxonomy cascade (product / article_number) -----------------------
+
+    function populateSelect(select, items) {
+        select.innerHTML = "";
+        var def = document.createElement("option");
+        def.value = "";
+        def.disabled = true;
+        def.textContent = "——";
+        select.appendChild(def);
+        items.forEach(function (item) {
+            var opt = document.createElement("option");
+            opt.value = item.id;
+            opt.textContent = item[LANG === "en" ? "label_en" : "label_sv"];
+            select.appendChild(opt);
+        });
+    }
+
+    function onCategoryChange() {
+        productEl.innerHTML = "";
+        articleEl.innerHTML = "";
+        var cat = categoryEl.value;
+        if (!cat) return;
+        fetch("/api/taxonomy/products?category=" + encodeURIComponent(cat))
+            .then(function (r) { return r.json(); })
+            .then(function (data) { populateSelect(productEl, data.items); })
+            .catch(function () { /* leave product on default */ });
+    }
+
+    function onProductChange() {
+        articleEl.innerHTML = "";
+        var cat = categoryEl.value;
+        var prod = productEl.value;
+        if (!cat || !prod) return;
+        fetch(
+            "/api/taxonomy/articles?category=" + encodeURIComponent(cat) +
+            "&product=" + encodeURIComponent(prod)
+        )
+            .then(function (r) { return r.json(); })
+            .then(function (data) { populateSelect(articleEl, data.items); })
+            .catch(function () { /* leave article on default */ });
+    }
+
+    // --- i18n --------------------------------------------------------------
+
+    function applyI18n() {
+        document.querySelectorAll("[data-i18n]").forEach(function (el) {
+            var key = el.getAttribute("data-i18n");
+            var value = I18N[LANG][key];
+            if (value != null) el.innerHTML = value;
+        });
+        document.querySelectorAll("[data-i18n-status]").forEach(function (el) {
+            var status = el.getAttribute("data-i18n-status");
+            el.textContent = status === "archived" ? (LANG === "en" ? "archived" : "Arkiverad") : (LANG === "en" ? "active" : "Aktiv");
+        });
+        var countEl = document.querySelector(".list-count");
+        if (countEl) {
+            var n = countEl.getAttribute("data-count");
+            var word = LANG === "en" ? "results" : "resultat";
+            countEl.innerHTML = (n + " " + word);
+        }
+        if (qEl) qEl.placeholder = t("searchPlaceholder");
+    }
+
+    // --- filter form dispatch ---------------------------------------------
+
+    // The partial is self-contained; the owning page (which holds #record-list)
+    // listens for "list-filter" to re-fetch /ingest/list and swap it back.
+    if (filterForm) {
+        filterForm.addEventListener("submit", function (event) {
+            event.preventDefault();
+            window.dispatchEvent(new CustomEvent("list-filter", {
+                detail: {
+                    category: categoryEl.value,
+                    product: productEl.value,
+                    article_number: articleEl.value,
+                    status: document.getElementById("filter-status").value,
+                    q: qEl ? qEl.value : ""
+                }
+            }));
+        });
+    }
+    if (categoryEl) categoryEl.addEventListener("change", onCategoryChange);
+    if (productEl) productEl.addEventListener("change", onProductChange);
+
+    applyI18n();
+})();
+</script>

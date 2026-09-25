@@ -1,0 +1,14 @@
+# category -> product -> article_numbers (an enumerator per product)
+categories:
+  - id: "hydraulics"
+    label_sv: "Hydraulik"
+    label_en: "Hydraulics"
+    products:
+      - id: "pump_a"
+        label_sv: "Pump A"
+        label_en: "Pump A"
+        article_numbers: ["100-001", "100-002"]
+      - id: "valve_b"
+        label_sv: "Ventil B"
+        label_en: "Valve B"
+        article_numbers: ["200-010"]

@@ -1,0 +1,522 @@
+{% extends "base.html" %}
+{% block title %}F&S — Registrera titel{% endblock %}
+
+{% block styles %}
+:root {
+    --panel: #eef3fb;
+    --panel-2: #f5f9ff;
+    --text: #16233a;
+    --muted: #5a6b86;
+    --accent: #2f7fe0;
+    --success: #1e9e5f;
+    --error: #d9414f;
+    --border: #cdd9ec;
+    --accent-2: #dbe8fb;
+}
+.wrap { max-width: 760px; margin: 0 auto; padding: 28px 20px 64px; }
+header.page-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 24px;
+}
+header.page-head h1 { font-size: 22px; margin: 0; }
+.hint { color: var(--muted); font-size: 14px; margin-top: 4px; }
+.panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+    margin-bottom: 16px;
+}
+.panel h2 {
+    font-size: 15px; margin: 0 0 16px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.06em;
+}
+label.field { display: block; margin-bottom: 16px; }
+label.field .lbl { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+label.field .lbl .req { color: var(--error); }
+select, input, textarea {
+    width: 100%;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    padding: 10px 12px;
+    font-size: 15px;
+    font-family: inherit;
+}
+textarea { resize: vertical; min-height: 84px; }
+select:focus, input:focus, textarea:focus {
+    outline: none; border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-2);
+}
+.row { display: flex; gap: 16px; flex-wrap: wrap; }
+.row .field { flex: 1 1 200px; }
+.optional-group { border: 1px dashed var(--border); border-radius: 8px; overflow: hidden; }
+.optional-toggle {
+    width: 100%; background: transparent; border: none; color: var(--muted);
+    padding: 10px 4px; text-align: left; font-size: 13px; cursor: pointer;
+    display: flex; align-items: center; justify-content: space-between;
+}
+.optional-toggle .chev { transition: transform 0.15s ease; }
+.optional-toggle[aria-expanded="false"] .chev { transform: rotate(-90deg); }
+.optional-body { padding: 4px 20px 16px; }
+.optional-body.hidden { display: none; }
+.actions { display: flex; gap: 12px; align-items: center; margin-top: 8px; }
+.indicator {
+    min-height: 22px; font-size: 14px; margin-top: 14px; padding: 0;
+    transition: color 0.15s ease;
+}
+.indicator.success { color: var(--success); }
+.indicator.error {
+    color: var(--error);
+    font-weight: 700;
+    background: #fdeaea;
+    border: 1px solid var(--error);
+    border-radius: 8px;
+    padding: 10px 12px;
+}
+.indicator.duplicate { color: var(--error); }
+.indicator .id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+{% endblock %}
+
+{% block content %}
+<div class="wrap">
+    <form id="submit-form" novalidate>
+        <!-- Primary block: the four required fields (§3.1) -->
+        <div class="panel">
+            <h2 data-i18n="requiredHeading">Krävda fält</h2>
+
+            <label class="field">
+                <span class="lbl" data-i18n="category">Kategori <span class="req">*</span></span>
+                <select id="category" name="category" data-i18n-aria-placeholder="categoryPlaceholder">
+                    <option value="" selected disabled>——</option>
+                </select>
+            </label>
+
+            <label class="field">
+                <span class="lbl" data-i18n="product">Produkt <span class="req">*</span></span>
+                <select id="product" name="product" data-i18n-aria-placeholder="productPlaceholder">
+                    <option value="" selected disabled>——</option>
+                </select>
+            </label>
+
+            <label class="field">
+                <span class="lbl" data-i18n="failure">Kundens felbeskrivning <span class="req">*</span></span>
+                <textarea id="failure_description" name="failure_description"
+                          data-i18n-placeholder="failurePlaceholder"
+                          placeholder="Beskriv vad kunden upplever …"></textarea>
+            </label>
+
+            <label class="field">
+                <span class="lbl" data-i18n="solution">Lösningsbeskrivning <span class="req">*</span></span>
+                <textarea id="solution_description" name="solution_description"
+                          data-i18n-placeholder="solutionPlaceholder"
+                          placeholder="Beskriv hur felet löses …"></textarea>
+            </label>
+        </div>
+
+        <!-- Optional, collapsible block (§3.1) -->
+        <div class="panel optional-group">
+            <button type="button" id="optional-toggle" class="optional-toggle"
+                    aria-expanded="false" aria-controls="optional-body">
+                <span data-i18n="optionalHeading">Valfrihetsfält</span>
+                <span class="chev">▼</span>
+            </button>
+            <div id="optional-body" class="optional-body hidden">
+                <div class="row">
+                    <label class="field">
+                        <span class="lbl" data-i18n="articleNumber">Artikelnr</span>
+                        <select id="article_number" name="article_number"
+                                data-i18n-aria-placeholder="articlePlaceholder">
+                            <option value="" selected disabled>——</option>
+                        </select>
+                    </label>
+
+                    <label class="field">
+                        <span class="lbl" data-i18n="ncr">NCR</span>
+                        <input id="ncr" name="ncr" type="text" data-i18n-placeholder="ncrPlaceholder" />
+                    </label>
+                </div>
+                <label class="field">
+                    <span class="lbl" data-i18n="bugRecordNumber">Ägarnr</span>
+                    <input id="bug_record_number" name="bug_record_number" type="text"
+                           data-i18n-placeholder="bugRecordPlaceholder" />
+                </label>
+            </div>
+        </div>
+
+        <div class="actions">
+            <button type="submit" class="action primary" id="submit-btn" data-i18n="submit">Spara</button>
+            <button type="button" class="action secondary" id="clear-btn" data-i18n="clear">Rensa</button>
+        </div>
+
+        <div id="indicator" class="indicator" role="status" aria-live="polite"></div>
+    </form>
+
+    <!-- Record list (§3.5): the partial (filters + cards) lives behind the
+         #record-list element; fetched from /ingest/list and swapped in. -->
+    <div class="panel list-section">
+        <h2 data-i18n="listHeading">Poster</h2>
+        <div id="record-list" class="record-list">
+            <!-- partial injected here -->
+        </div>
+    </div>
+</div>
+
+<!-- hx-indicator lives in the document while a submit is in flight -->
+<div id="submit-busy" class="spinner" hidden></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+    "use strict";
+
+    // --- i18n labels. The server (POST /lang) is the source of truth for the
+    // agent language; this table keeps the form labels in sync when the user
+    // toggles the shared selector so the page works without a server round-trip.
+    var I18N = {
+        sv: {
+            requiredHeading: "Krävda fält",
+            category: "Kategori <span class=\"req\">*</span>",
+            product: "Produkt <span class=\"req\">*</span>",
+            failure: "Kundens felbeskrivning <span class=\"req\">*</span>",
+            solution: "Lösningsbeskrivning <span class=\"req\">*</span>",
+            articleNumber: "Artikelnr",
+            ncr: "NCR",
+            bugRecordNumber: "Ägarnr",
+            optionalHeading: "Valfrihetsfält",
+            categoryPlaceholder: "—— Välj kategori",
+            productPlaceholder: "—— Välj produkt",
+            articlePlaceholder: "—— Välj artikel",
+            failurePlaceholder: "Beskriv vad kunden upplever …",
+            solutionPlaceholder: "Beskriv hur felet löses …",
+            ncrPlaceholder: "t.ex. NCR-2024-017",
+            bugRecordPlaceholder: "t.ex. BUG-4821",
+            submit: "Spara",
+            clear: "Rensa",
+            progress: "Sparar…",
+            success: "Sparad ✓",
+            missing: "Vänligen fyll i: {fields}",
+            categoryField: "Kategori",
+            productField: "Produkt",
+            failureField: "Kundens felbeskrivning",
+            solutionField: "Lösningsbeskrivning",
+            duplicate: "Finns redan (id {id}, skapad {created})",
+            error: "Något gick fel. Försök igen."
+        },
+        en: {
+            requiredHeading: "Required fields",
+            category: "Category <span class=\"req\">*</span>",
+            product: "Product <span class=\"req\">*</span>",
+            failure: "Customer failure description <span class=\"req\">*</span>",
+            solution: "Solution description <span class=\"req\">*</span>",
+            articleNumber: "Article number",
+            ncr: "NCR",
+            bugRecordNumber: "Bug record number",
+            optionalHeading: "Optional fields",
+            categoryPlaceholder: "—— Select category",
+            productPlaceholder: "—— Select product",
+            articlePlaceholder: "—— Select article",
+            failurePlaceholder: "Describe what the customer experiences …",
+            solutionPlaceholder: "Describe how the failure is solved …",
+            ncrPlaceholder: "e.g. NCR-2024-017",
+            bugRecordPlaceholder: "e.g. BUG-4821",
+            submit: "Save",
+            clear: "Clear",
+            progress: "Saving…",
+            success: "Saved ✓",
+            missing: "Please fill in: {fields}",
+            categoryField: "Category",
+            productField: "Product",
+            failureField: "Customer failure description",
+            solutionField: "Solution description",
+            duplicate: "Already exists (id {id}, created {created})",
+            error: "Something went wrong. Please retry."
+        }
+    };
+
+    var LANG = "sv";
+    var form = document.getElementById("submit-form");
+    var categoryEl = document.getElementById("category");
+    var productEl = document.getElementById("product");
+    var articleEl = document.getElementById("article_number");
+    var indicator = document.getElementById("indicator");
+    var busy = document.getElementById("submit-busy");
+    var submitBtn = document.getElementById("submit-btn");
+
+    // --- helpers -----------------------------------------------------------
+
+    function setLabel(key) {
+        var node = document.querySelector("[data-i18n='" + key + "']");
+        if (node) node.innerHTML = I18N[LANG][key];
+    }
+
+    function setPlaceholder(id, key) {
+        var node = document.getElementById(id);
+        if (node) node.placeholder = I18N[LANG][key];
+    }
+
+    // Re-render every i18n-controlled label/placeholder on language change.
+    function applyI18n() {
+        var keys = [
+            "requiredHeading", "category", "product",
+            "failure", "solution", "articleNumber", "ncr", "bugRecordNumber",
+            "optionalHeading"
+        ];
+        keys.forEach(setLabel);
+        setPlaceholder("category", "categoryPlaceholder");
+        setPlaceholder("product", "productPlaceholder");
+        setPlaceholder("article_number", "articlePlaceholder");
+        setPlaceholder("failure_description", "failurePlaceholder");
+        setPlaceholder("solution_description", "solutionPlaceholder");
+        setPlaceholder("ncr", "ncrPlaceholder");
+        setPlaceholder("bug_record_number", "bugRecordPlaceholder");
+        updateLangButtons();
+    }
+
+    function updateLangButtons() {
+        document.querySelectorAll(".lang-toggle button").forEach(function (btn) {
+            btn.classList.toggle("active", btn.getAttribute("data-lang") === LANG);
+        });
+    }
+
+    // Populate a <select> from a taxonomy payload, keeping the "——" default.
+    function populateSelect(select, items) {
+        var current = select.value;
+        select.innerHTML = "";
+        var def = document.createElement("option");
+        def.value = "";
+        def.disabled = true;
+        def.selected = true;
+        def.textContent = "——";
+        def.setAttribute("aria-placeholder", "true");
+        select.appendChild(def);
+        items.forEach(function (item) {
+            var opt = document.createElement("option");
+            opt.value = item.id;
+            opt.textContent = item[LANG === "en" ? "label_en" : "label_sv"];
+            select.appendChild(opt);
+        });
+        if (current) select.value = current;
+    }
+
+    // --- cascade (§2) ------------------------------------------------------
+
+    function onCategoryChange() {
+        var cat = categoryEl.value;
+        // Reset the dependent selects when the category changes.
+        setSelectOptions(productEl, []);
+        setSelectOptions(articleEl, []);
+        if (!cat) return;
+        fetch("/api/taxonomy/products?category=" + encodeURIComponent(cat))
+            .then(function (r) { return r.json(); })
+            .then(function (data) { populateSelect(productEl, data.items); })
+            .catch(function () { /* leave product on default */ });
+    }
+
+    function onProductChange() {
+        var cat = categoryEl.value;
+        var prod = productEl.value;
+        setSelectOptions(articleEl, []);
+        if (!cat || !prod) return;
+        fetch(
+            "/api/taxonomy/articles?category=" +
+                encodeURIComponent(cat) +
+                "&product=" +
+                encodeURIComponent(prod)
+        )
+            .then(function (r) { return r.json(); })
+            .then(function (data) { populateSelect(articleEl, data.items); })
+            .catch(function () { /* leave article on default */ });
+    }
+
+    function setSelectOptions(select, items) {
+        var current = select.value;
+        select.innerHTML = "";
+        var def = document.createElement("option");
+        def.value = "";
+        def.disabled = true;
+        def.selected = true;
+        def.textContent = "——";
+        select.appendChild(def);
+        items.forEach(function (item) {
+            var opt = document.createElement("option");
+            opt.value = item.id;
+            opt.textContent = item[LANG === "en" ? "label_en" : "label_sv"];
+            select.appendChild(opt);
+        });
+        if (current) select.value = current;
+    }
+
+    // --- indicators --------------------------------------------------------
+
+    function showProgress() {
+        indicator.className = "indicator";
+        indicator.innerHTML =
+            "<span class='spinner'></span>" + I18N[LANG].progress;
+        submitBtn.disabled = true;
+    }
+
+    function showSuccess() {
+        indicator.className = "indicator success";
+        indicator.textContent = I18N[LANG].success;
+        submitBtn.disabled = false;
+    }
+
+    function showDuplicate(id, created) {
+        indicator.className = "indicator duplicate";
+        indicator.innerHTML =
+            I18N[LANG].duplicate
+                .replace("{id}", "<span class='id'>" + id + "</span>")
+                .replace("{created}", "<span class='id'>" + created + "</span>");
+        submitBtn.disabled = false;
+    }
+
+    function showError(message) {
+        indicator.className = "indicator error";
+        indicator.textContent = message || I18N[LANG].error;
+        submitBtn.disabled = false;
+    }
+
+    // --- submit (§3.2) -----------------------------------------------------
+
+    function clientValidate() {
+        var missing = [];
+        if (!categoryEl.value) missing.push(I18N[LANG].categoryField);
+        if (!productEl.value) missing.push(I18N[LANG].productField);
+        if (!document.getElementById("failure_description").value.trim()) {
+            missing.push(I18N[LANG].failureField);
+        }
+        if (!document.getElementById("solution_description").value.trim()) {
+            missing.push(I18N[LANG].solutionField);
+        }
+        if (missing.length) {
+            showError(I18N[LANG].missing.replace("{fields}", missing.join(", ")));
+            return false;
+        }
+        return true;
+    }
+
+    function resetForm() {
+        form.reset();
+        setSelectOptions(productEl, []);
+        setSelectOptions(articleEl, []);
+        hideBusy();
+    }
+
+    form.addEventListener("submit", function (event) {
+        event.preventDefault();
+        if (!clientValidate()) return;
+
+        showProgress();
+        showBusy();
+
+        var body = {
+            category: categoryEl.value,
+            product: productEl.value,
+            article_number: articleEl.value || null,
+            failure_description: document.getElementById("failure_description").value,
+            solution_description: document.getElementById("solution_description").value,
+            ncr: document.getElementById("ncr").value,
+            bug_record_number: document.getElementById("bug_record_number").value
+        };
+
+        fetch("/api/records", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body)
+        })
+            .then(async function (resp) {
+                var data = await resp.json().catch(function () { return {}; });
+                if (resp.status === 201) {
+                    showSuccess();
+                    resetForm();
+                } else if (resp.status === 409) {
+                    showDuplicate(data.error && data.error.existing_id, data.error && data.error.created_at);
+                } else {
+                    showError((data.error && data.error.message) || I18N[LANG].error);
+                }
+            })
+            .catch(function () {
+                showError(I18N[LANG].error);
+            });
+    });
+
+    document.getElementById("clear-btn").addEventListener("click", function () {
+        indicator.className = "indicator";
+        indicator.textContent = "";
+        resetForm();
+    });
+
+    // --- optional group toggle --------------------------------------------
+
+    document.getElementById("optional-toggle").addEventListener("click", function () {
+        var expanded = this.getAttribute("aria-expanded") === "true";
+        this.setAttribute("aria-expanded", String(!expanded));
+        document.getElementById("optional-body").classList.toggle("hidden", expanded);
+    });
+
+    // --- wiring ------------------------------------------------------------
+
+    categoryEl.addEventListener("change", onCategoryChange);
+    productEl.addEventListener("change", onProductChange);
+
+    document.querySelectorAll(".lang-toggle button").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+            LANG = btn.getAttribute("data-lang");
+            applyI18n();
+        });
+    });
+
+    function showBusy() {
+        busy.hidden = false;
+    }
+    function hideBusy() {
+        busy.hidden = true;
+    }
+
+    // --- record list (§3.5) -----------------------------------------------
+    // The partial owns its own taxonomy cascade and its own language table;
+    // on load we only need to fetch the partial into #record-list so the
+    // filters and cards render. Archive / Restore are real forms (with a
+    // confirm) and reload the page through the standard POST.
+
+    function loadList() {
+        var list = document.getElementById("record-list");
+        if (!list) return;
+        var params = new URLSearchParams();
+        var catEl = document.getElementById("filter-category");
+        var prodEl = document.getElementById("filter-product");
+        var artEl = document.getElementById("filter-article_number");
+        var qEl = document.getElementById("filter-q");
+        var statusEl = document.getElementById("filter-status");
+        function set(name, value) { if (value) params.set(name, value); }
+        set("category", catEl ? catEl.value : "");
+        set("product", prodEl ? prodEl.value : "");
+        set("article_number", artEl ? artEl.value : "");
+        set("status", statusEl ? statusEl.value : "active");
+        set("q", qEl ? qEl.value : "");
+        fetch("/ingest/list?" + params.toString())
+            .then(function (r) { return r.text(); })
+            .then(function (html) { list.innerHTML = html; })
+            .catch(function () { /* leave the panel empty on failure */ });
+    }
+
+    // --- init --------------------------------------------------------------
+
+    applyI18n();
+    // Fetch the category list on load so the <select> has options before the
+    // product cascade begins; the cascade only fires once a category is picked.
+    fetch("/api/taxonomy/categories")
+        .then(function (r) { return r.json(); })
+        .then(function (data) { populateSelect(categoryEl, data.items); })
+        .catch(function () { /* leave category on default */ });
+    setSelectOptions(productEl, []);
+    setSelectOptions(articleEl, []);
+    loadList();
+})();
+</script>
+{% endblock %}

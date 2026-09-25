@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+psycopg[binary]
+pydantic
+pyyaml
+httpx
+python-multipart
+jinja2
+pytest
