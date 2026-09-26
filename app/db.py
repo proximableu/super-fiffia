@@ -174,9 +174,15 @@ def _acquire_migration_lock() -> psycopg.Connection:
 
 
 def _release_migration_lock(conn: psycopg.Connection) -> None:
-    """Release the migration advisory lock and close the holding connection."""
+    """Release the migration advisory lock and close the holding connection.
+
+    On a failed migration the transaction on ``conn`` is already aborted, so the
+    ``pg_advisory_unlock`` call would raise ``InFailedSqlTransaction`` and mask
+    the real error. Roll back first so the unlock runs on a live transaction.
+    """
 
     try:
+        conn.rollback()
         with conn.cursor() as cur:
             cur.execute("SELECT pg_advisory_unlock(%s)", (_MIGRATION_LOCK_KEY,))
     finally:
