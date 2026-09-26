@@ -48,6 +48,7 @@ from uuid import UUID
 
 from fastapi import FastAPI, Query, Request
 from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -175,6 +176,7 @@ def create_app() -> FastAPI:
     (see the CONTRACT.md §12 route table — only the T5.1 surface is mounted here).
     """
     app = FastAPI(title="F&S WebUI", version="0.1.0")
+    app.exception_handler(RequestValidationError)(_on_validation_error)
     app.exception_handler(NotFoundError)(_on_not_found)
     app.exception_handler(InvalidTaxonomyError)(_on_invalid_taxonomy)
     app.exception_handler(DuplicateError)(_on_duplicate)
@@ -617,6 +619,27 @@ def _product_label(
         if candidate.id == product:
             return candidate.label_en if lang == "en" else candidate.label_sv
     return product
+
+
+def _on_validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
+    """Map a Pydantic / body validation failure to ``422 validation``.
+
+    Malformed JSON on the mounted JSON routes (e.g. the missing ``session_token``
+    on ``POST /chat``) otherwise falls through to FastAPI's default
+    ``422 {"detail": ...}``; this reports the first offending field with the
+    same §10 envelope the REST API uses.
+    """
+    first = exc.errors()[0]
+    field = ".".join(str(loc) for loc in first["loc"]) or "body"
+    return JSONResponse(
+        status_code=422,
+        content={
+            "error": {
+                "code": "validation",
+                "message": f"{field}: {first['msg']}",
+            }
+        },
+    )
 
 
 def _on_not_found(request: Request, exc: NotFoundError) -> JSONResponse:

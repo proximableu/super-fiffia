@@ -382,3 +382,19 @@ def test_check_duplicate_route_absent(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     assert resp.status_code == 200
     assert resp.json()["duplicate"] is False
+
+
+def test_validation_error_returns_envelope(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A malformed body gets the CONTRACT §10 ``validation`` envelope, not FastAPI's ``{"detail": ...}``.
+
+    ``POST /chat`` requires ``session_token``; an empty/invalid body raises
+    ``RequestValidationError``. Before B8 that fell through to FastAPI's default
+    ``422 {"detail": [...]}``; the webui app now maps it to
+    ``422 {"error": {"code": "validation", "message": ...}}``. See bug_report_2.md B8.
+    """
+    resp = _client().post("/chat", json={"scope": {}, "messages": [], "lang": "en"})
+    assert resp.status_code == 422
+    body = resp.json()
+    assert "error" in body and body["error"]["code"] == "validation"
+    # Not FastAPI's default envelope.
+    assert "detail" not in body
