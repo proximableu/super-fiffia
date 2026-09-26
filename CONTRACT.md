@@ -585,7 +585,7 @@ A duplicate error additionally carries `"existing_id": "<uuid>"` and `"created_a
 | `GET` | `/api/taxonomy/products?category=<id>` | `200 {"items": [{"id": "pump_a", "label_sv": "Pump A", "label_en": "Pump A"}]}`. Unknown category → `404`. |
 | `GET` | `/api/taxonomy/articles?category=<id>&product=<id>` | `200 {"items": ["100-001", "100-002"]}`. Unknown pair → `404`. |
 
-**Submission paths (locked):** the WebUI submit and the REST API both call `records_service.submit` — one identical pipeline: validate → hash → embed → insert. API-created records default `source="api"` (override per `RecordIn.source`); the external script resolves `article_number → category+product` itself before posting.
+**Submission paths (locked):** the WebUI submit and the REST API both call `records_service.submit` — one identical pipeline: validate → hash → embed → insert. API-created records force `source="api"`, the WebUI force `source="manual"` (a client cannot override); the external script resolves `article_number → category+product` itself before posting.
 
 ---
 

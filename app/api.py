@@ -73,13 +73,14 @@ logger = logging.getLogger(__name__)
 # Request / response models (CONTRACT.md §10)
 # --------------------------------------------------------------------------- #
 class ApiRecordIn(RecordIn):
-    """A :class:`RecordIn` that defaults ``source`` to ``"api"``.
+    """A :class:`RecordIn` that forces ``source`` to ``"api"``.
 
-    External (REST) submits are automated, so a record created through the API
-    is tagged ``source='api'`` unless the caller overrides it explicitly
-    (CONTRACT.md §10). ``article_number`` remains optional; an explicit value
-    must still belong to the product's list — :func:`records_service.submit`
-    raises :exc:`InvalidTaxonomyError` otherwise.
+    External (REST) submits are automated, so a record created through the API is
+    tagged ``source='api'`` — the body's ``source`` field is stripped before the
+    re-wrap (see :func:`create_record`), so a client cannot masquerade it as an
+    ``import``/``manual`` submit. ``article_number`` remains optional; an
+    explicit value must still belong to the product's list —
+    :func:`records_service.submit` raises :exc:`InvalidTaxonomyError` otherwise.
     """
 
     source: Source = "api"

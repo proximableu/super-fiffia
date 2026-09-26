@@ -30,6 +30,12 @@ def _client() -> TestClient:
     return TestClient(create_app())
 
 
+# A 1024-dimensional fake embedding so submit runs with no live Ollama and still
+# fits the ``embedding vector(1024)`` column (mirrors tests/test_api.py).
+def _fake_embed(texts):
+    return [[0.1] * 1024 for _ in texts]
+
+
 # --------------------------------------------------------------------------- #
 # Route contract — CONTRACT.md §12
 # --------------------------------------------------------------------------- #
@@ -325,3 +331,54 @@ def test_clear_missing_session_is_noop() -> None:
     resp = _client().post("/chat/clear", json={"session_token": "never-existed"})
     assert resp.status_code == 200
     assert resp.json() == {"cleared": True}
+
+
+# --------------------------------------------------------------------------- #
+# webui record submission — provenance + pre-check (bug #3.3 follow-ups)
+# --------------------------------------------------------------------------- #
+
+
+def test_create_record_forces_source_manual(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``POST /api/records`` forces ``source='manual'`` regardless of the body.
+
+    A :9001 client could set ``source='api'`` in the JSON body; the route strips
+    it and forces ``'manual'`` so a human entry point can never masquerade as an
+    automated/import submission. Assert the stored ``source`` in the response.
+    """
+    from app import records_service
+
+    monkeypatch.setattr(records_service, "embed", _fake_embed)
+
+    resp = _client().post(
+        "/api/records",
+        json={
+            "category": "hydraulics",
+            "product": "valve_b",
+            "failure_description": "F",
+            "solution_description": "S",
+            "source": "api",  # a hostile client tries to inject this
+        },
+    )
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["source"] == "manual"
+
+
+def test_check_duplicate_route_absent(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``POST /api/records/check-duplicate`` reports ``duplicate=False`` for new text.
+
+    Exercises the real ``check_duplicate`` service against the truncated test DB
+    — no new record exists yet, so the pre-check returns False.
+    """
+    from app import records_service
+
+    monkeypatch.setattr(
+        records_service,
+        "embed",
+        _fake_embed,  # type: ignore[assignment]
+    )
+    resp = _client().post(
+        "/api/records/check-duplicate",
+        json={"failure_description": "never-stored", "solution_description": "S"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["duplicate"] is False

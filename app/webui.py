@@ -503,8 +503,15 @@ def create_app() -> FastAPI:
         responses={409: {"model": "Error"}, 422: {"model": "Error"}},
     )
     def create_record(body: RecordIn) -> RecordOut:
-        """Submit a record (``source='manual'``, ``actor='web'``) via the pipeline."""
-        return submit(body, actor="web")
+        """Submit a record (``source='manual'``, ``actor='web'``) via the pipeline.
+
+        The form is a human entry point, never an API/import, so ``source`` is
+        stripped and forced to ``'manual'`` before the pipeline — a :9001 client
+        can otherwise set ``source='api'``/``'import'``, which the API route
+        prevents by re-wrapping in ``ApiRecordIn``.
+        """
+        payload = {k: v for k, v in body.model_dump().items() if k != "source"}
+        return submit(RecordIn(**payload, source="manual"), actor="web")
 
     @app.post(
         "/api/records/check-duplicate",
