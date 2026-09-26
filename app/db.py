@@ -8,11 +8,10 @@ needs this, but the runner is ready for it).
 
 Connection pool
 ---------------
-A single module-level connection pool is created lazily from
+A single module-level :class:`~psycopg_pool.ConnectionPool` is created lazily from
 ``settings.db.dsn`` using ``settings.db.pool_min`` / ``settings.db.pool_max``.
-If ``psycopg.pool`` is unavailable (e.g. a wheel built without the pool module)
-the runner falls back to a single bare connection; ``_checkout()`` / ``_release()``
-treat both transparently.
+If the ``psycopg[binary,pool]`` extra is missing, the import at the top of the
+module fails loudly, so the app never runs without pooling.
 
 Migration runner contract (``CONTRACT.md`` §5)
 ----------------------------------------------
@@ -38,17 +37,13 @@ _MIGRATIONS_DIR = _REPO_ROOT / "migrations"
 # ``{{ stats.role_name }}`` style placeholders.
 _PLACEHOLDER_RE = re.compile(r"{{\s*([A-Za-z_][\w.]*)\s*}}")
 
-try:  # psycopg v3 ships a connection pool; fall back to plain connections.
-    from psycopg.pool import ConnectionPool
-except Exception:  # pragma: no cover - exercised only when the wheel is broken
-    ConnectionPool = None  # type: ignore[assignment]
+# ``ConnectionPool`` lives in the separate ``psycopg-pool`` distribution pulled in
+# by the ``psycopg[binary,pool]`` extra. The import is intentionally unguarded:
+# if the extra is missing, the pool is unavailable and the app must refuse to
+# start rather than silently fall back to a single bare connection (no pooling).
+from psycopg_pool import ConnectionPool
 
 _pool: ConnectionPool | psycopg.Connection | None = None
-
-
-def _is_pool() -> bool:
-    """Whether the active backend is a real connection pool."""
-    return ConnectionPool is not None
 
 
 def _resolve_dotted(path: str, root: Any) -> str:
@@ -68,57 +63,42 @@ def _substitute(sql: str, cfg: Settings) -> str:
     return _PLACEHOLDER_RE.sub(_match, sql)
 
 
-def _connect() -> psycopg.Connection:
-    """Open a single connection using the configured DSN."""
-    return psycopg.connect(settings.db.dsn)
-
-
-def get_pool() -> ConnectionPool | psycopg.Connection:
+def get_pool() -> ConnectionPool:
     """Return a lazily created connection pool.
 
-    Falls back to a single bare connection when ``psycopg.pool`` is not
-    available (e.g. a wheel built without the pool module); the rest of the
-    runner treats both transparently via ``_checkout()`` / ``_release()``.
+    :class:`~psycopg_pool.ConnectionPool` is created on first call using
+    ``settings.db.dsn`` and ``min_size`` / ``max_size``. A missing ``psycopg``
+    extra raises at import time, so this never falls back to a bare connection.
     """
     global _pool
     if _pool is None:
-        if _is_pool():
-            _pool = ConnectionPool(
-                min_connections=settings.db.pool_min,
-                max_connections=settings.db.pool_max,
-                conninfo=settings.db.dsn,
-            )
-        else:  # pragma: no cover - only when the pool module is missing
-            _pool = _connect()
+        _pool = ConnectionPool(
+            min_size=settings.db.pool_min,
+            max_size=settings.db.pool_max,
+            conninfo=settings.db.dsn,
+        )
     return _pool
 
 
 def _checkout() -> psycopg.Connection:
-    """Hand out a connection to use, from the pool or the bare fallback.
+    """Hand out a pooled connection, forcing autocommit off on every checkout.
 
-    A connection from ``ConnectionPool.getconn()`` can carry autocommit back on
-    from a previous checkout (the pool does not reset it). psycopg's
+    A connection returned by ``ConnectionPool.getconn()`` can carry autocommit
+    back on from a previous checkout (the pool does not reset it). psycopg's
     ``commit()`` is a no-op while autocommit is on, which would leave writes
     uncommitted and un-tracked across TRUNCATE boundaries between tests, so
     autocommit is forced off on every checkout.
-
-    The pool is created lazily here (via :func:`get_pool`) so callers that never
-    call :func:`run_migrations` — such as :func:`records_service.submit` — still
-    get a live connection instead of ``None``.
     """
-    get_pool()
-    if _is_pool():
-        conn = _pool.getconn()
-        if getattr(conn, "autocommit", False):
-            conn.autocommit = False
-        return conn
-    return _pool
+    _pool = get_pool()
+    conn = _pool.getconn()
+    if getattr(conn, "autocommit", False):
+        conn.autocommit = False
+    return conn
 
 
 def _release(conn: psycopg.Connection) -> None:
-    """Return a checked-out connection to the pool, if applicable."""
-    if _is_pool() and _pool is not None:
-        _pool.putconn(conn)
+    """Return a checked-out connection to the pool."""
+    _pool.putconn(conn)
 
 
 def close_pool() -> None:
