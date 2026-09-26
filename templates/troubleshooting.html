@@ -279,7 +279,8 @@
             }
         };
 
-        var LANG = "sv";
+        var LANG = "{{ lang }}";
+        if (LANG !== "en") LANG = "sv";
         var SESSION_KEY = "fs_chat_session";
 
         // The context header scopes retrieval; the failure description is the first
