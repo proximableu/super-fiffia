@@ -39,6 +39,8 @@ the API.
 
 from __future__ import annotations
 
+import logging
+import sys
 import urllib.parse
 from pathlib import Path
 from typing import Any, Literal, Optional
@@ -83,6 +85,8 @@ _STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
 templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
 """The shared Jinja2 template engine (``templates/``)."""
+
+logger = logging.getLogger(__name__)
 
 # ``lang`` cookie name — the session language lives in a cookie so the server can
 # server-render the active-language labels and the JS can read it on load.
@@ -225,7 +229,24 @@ def create_app() -> FastAPI:
         try:
             return chat(body.scope, body.messages, body.lang, body.session_token).model_dump()
         except Exception as exc:  # noqa: BLE001 - surface any agent failure as JSON
-            return {"error": {"message": str(exc)}}
+            # Agent failures must reach the Troubleshooting JS as a non-2xx
+            # (its else-branch reads `data.error.message` on non-2xx; a 200 is
+            # treated as a successful answer and rendered as an empty bubble).
+            # See bug_report_2.md B2: the previous 200-shape made that branch
+            # unreachable. Log the traceback; surface only the operator-visible
+            # message. ``exc_info`` is passed as the live tuple here because the
+            # package's structured-logger override does not resolve a bare
+            # ``exc_info=True`` (as ``logging._log`` normally does) before storing
+            # it on the record, so ``logger.exception`` would crash the formatter.
+            logger.error(
+                "chat endpoint agent failure for session %r",
+                body.session_token,
+                exc_info=sys.exc_info(),
+            )
+            return JSONResponse(
+                status_code=500,
+                content={"error": {"code": "internal", "message": str(exc)}},
+            )
 
     @app.post("/chat/clear", status_code=200)
     def chat_clear_endpoint(body: ChatClearRequest) -> dict[str, bool]:

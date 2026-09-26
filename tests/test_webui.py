@@ -282,10 +282,12 @@ def test_chat_route_folds_turn_into_history(monkeypatch: pytest.MonkeyPatch) -> 
 
 
 def test_chat_route_error_returns_error_contract(monkeypatch: pytest.MonkeyPatch) -> None:
-    """``POST /chat`` maps an agent failure to ``{error: {message}}`` (200).
+    """``POST /chat`` maps an agent failure to the CONTRACT §10 envelope over a non-2xx.
 
-    The Troubleshooting JS reads ``data.error.message``, so a raised agent error
-    must come back as that shape with a 200 status, not a 500.
+    The Troubleshooting JS only reads ``data.error.message`` for non-2xx responses
+    (a 200 is treated as a successful answer), so agent failures must come back as a
+    500 with the ``{"error": {"code": "internal", "message": ...}}`` shape, not a 200.
+    See bug_report_2.md B2.
     """
 
     def _raise(scope, messages, lang, budget):
@@ -297,7 +299,8 @@ def test_chat_route_error_returns_error_contract(monkeypatch: pytest.MonkeyPatch
         "/chat",
         json={"scope": {}, "messages": [], "lang": "en", "session_token": "sess-err"},
     )
-    assert resp.status_code == 200
+    assert resp.status_code == 500
+    assert resp.json()["error"]["code"] == "internal"
     assert resp.json()["error"]["message"] == "llm exploded"
 
 
