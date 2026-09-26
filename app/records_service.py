@@ -124,10 +124,9 @@ def check_duplicate(failure: str, solution: str) -> DuplicateInfo | None:
     conn = _checkout()
     try:
         existing = _find_active_by_hash(conn, digest)
-        # A SELECT implicitly opens a transaction; close it here. In bare
-        # single-connection mode (``psycopg.pool`` unavailable) ``conn`` is the
-        # shared pool connection, so leaving it idle-in-transaction would hold
-        # an ACCESS SHARE lock on ``records`` and block the next test's TRUNCATE.
+        # A SELECT opens a transaction; close it here so the returned pooled
+        # connection is not left idle-in-transaction holding an ACCESS SHARE
+        # lock on ``records`` that would block the next test's TRUNCATE.
         conn.commit()
         if existing is None:
             return None
