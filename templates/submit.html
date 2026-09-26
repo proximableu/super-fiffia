@@ -517,6 +517,17 @@ select:focus, input:focus, textarea:focus {
     setSelectOptions(productEl, []);
     setSelectOptions(articleEl, []);
     loadList();
+
+    // --- record-list filter (§3.5, bug B3) ---------------------------------
+    // The swapped-in partial (records_list.html) dispatches a "list-filter"
+    // CustomEvent on window from its filter form's submit handler; it carries
+    // the same field names loadList() reads. The owning page must re-fetch
+    // /ingest/list and swap the partial back. A capture-phase listener on
+    // document receives the event dispatched on window (capture phase reaches
+    // document on the way down to the target), so no bubbling is required.
+    document.addEventListener("list-filter", function () {
+        loadList();
+    }, true);
 })();
 </script>
 {% endblock %}
