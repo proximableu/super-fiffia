@@ -211,10 +211,14 @@ class RagIngestRequest(BaseModel):
     """Body of ``POST /api/rag/ingest``.
 
     An optional ``source_dir`` overrides where to read documents from; when
-    omitted the default document directory (``rag_source``) is used.
+    omitted the default document directory (``rag_source``) is used. The
+    optional ``chunk_chars`` / ``overlap`` override the chunking size in
+    characters (see :func:`app.rag.chunk` / :func:`app.rag.ingest`).
     """
 
     source_dir: str = ""
+    chunk_chars: int = 8000
+    overlap: int = 800
 
 
 class ChatRequest(BaseModel):
@@ -493,7 +497,7 @@ def _register_routes(app: FastAPI) -> None:
         default ``rag_source``) into ``rag_chunks``; returns ``{files, chunks,
         embedded, upserted}``. Idempotent by ``(source_file, content_hash)``."""
         source_dir = body.source_dir or "rag_source"
-        result = ingest(source_dir)
+        result = ingest(source_dir, chunk_chars=body.chunk_chars, overlap=body.overlap)
         return RagIngestResponse(
             files=result.files,
             chunks=result.chunks,

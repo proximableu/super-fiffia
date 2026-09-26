@@ -74,8 +74,8 @@ def _content_hash(source_file: str, chunk_text: str) -> str:
 def chunk(
     text: str,
     *,
-    chunk_chars: int = 2000,
-    overlap: int = 200,
+    chunk_chars: int = 8000,
+    overlap: int = 800,
 ) -> list[tuple[int, str | None, str]]:
     """Split ``text`` into ``(chunk_index, section_header, chunk_text)`` triples.
 
@@ -92,6 +92,9 @@ def chunk(
         chunk_chars: target size of each chunk in characters (must be positive).
         overlap: characters carried from the end of one chunk into the next
             (must be in ``[0, chunk_chars)``).
+        Sizes are characters, not model tokens — the project has no tokenizer
+        for the embedder's BPE, so ``8000`` / ``800`` approximate a ~2k-token
+        chunk with a ~1k-token overlap.
 
     Returns:
         An ordered list of ``(chunk_index, section_header, chunk_text)`` where
@@ -237,8 +240,8 @@ def _upsert_batch(
 def ingest(
     source_dir: str | os.PathLike[str],
     *,
-    chunk_chars: int = 2000,
-    overlap: int = 200,
+    chunk_chars: int = 8000,
+    overlap: int = 800,
     dry_run: bool = False,
 ) -> RagIngestResult:
     """Chunk and embed every document under ``source_dir`` into ``rag_chunks``.
@@ -250,8 +253,8 @@ def ingest(
 
     Args:
         source_dir: path to the directory of markdown/text documents.
-        chunk_chars: target chunk size passed to :func:`chunk`.
-        overlap: overlap between chunks passed to :func:`chunk`.
+        chunk_chars: target chunk size (characters) passed to :func:`chunk`.
+        overlap: overlap (characters) between chunks passed to :func:`chunk`.
         dry_run: when true, count the work without writing or embedding.
 
     Returns:
