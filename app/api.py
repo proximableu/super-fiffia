@@ -284,6 +284,13 @@ def _register_middleware(app: FastAPI) -> None:
                 # A bare ``response.status_code`` here would raise ``NameError``
                 # and replace the original error; log the failure instead.
                 status = response.status_code if response is not None else 500
+                # Attach the id inside the ``finally`` so the happy path always
+                # carries it — on an escaped ``call_next`` exception the response
+                # stays ``None`` and the header write (below) is skipped, but a
+                # ``response.headers[...]`` here would otherwise run only after the
+                # context exits, letting an exception escape before it is set.
+                if response is not None:
+                    response.headers["X-Request-Id"] = request_id
                 logger.info(
                     "http_request",
                     stage="app",
@@ -292,7 +299,9 @@ def _register_middleware(app: FastAPI) -> None:
                     status=status,
                     latency_ms=round(latency_ms, 2),
                 )
-        response.headers["X-Request-Id"] = request_id
+        # Unreachable on the exception path (the exception already propagated out
+        # of the ``finally``); the guard narrows ``response`` for the return type.
+        assert response is not None
         return response
 
 
