@@ -23,8 +23,6 @@ def _count_rows(db_conn: Any, sql: str, args: tuple[Any, ...] = ()) -> int:
 
 def _truncate(db_conn: Any) -> None:
     """TRUNCATE ``rag_chunks`` on a separate autocommit connection."""
-    from app.db import _release
-
     temp = psycopg.connect(
         db_conn.info.dsn, autocommit=True, row_factory=psycopg.rows.dict_row
     )
@@ -32,7 +30,9 @@ def _truncate(db_conn: Any) -> None:
         with temp.cursor() as cur:
             cur.execute("TRUNCATE rag_chunks")
     finally:
-        _release(temp)
+        # The connection is owned by this helper (it was never checked out from
+        # the pool), so it is closed rather than returned via ``_release``.
+        temp.close()
 
 
 def _write_doc(root: Path, name: str, content: str) -> None:
