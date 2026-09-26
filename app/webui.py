@@ -41,14 +41,15 @@ from __future__ import annotations
 
 import urllib.parse
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Optional
 from uuid import UUID
 
 from fastapi import FastAPI, Query, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.chat import chat, clear_session
 from app.config import settings, taxonomy
@@ -58,6 +59,7 @@ from app.records_repo import (
     DuplicateError,
     NotFoundError,
     RecordIn,
+    RecordOut,
     Scope,
     get,
     list_records,
@@ -65,7 +67,9 @@ from app.records_repo import (
 from app.records_service import (
     InvalidTaxonomyError,
     archive_record,
+    check_duplicate,
     restore_record,
+    submit,
     update_record,
 )
 from app.taxonomy import (
@@ -120,6 +124,26 @@ class TaxonomyCategoriesResult(BaseModel):
     items: list[TaxonomyItem] = []
 
 
+class CheckDuplicateRequest(BaseModel):
+    """Body of ``POST /api/records/check-duplicate``.
+
+    Carries only the two hash fields: the pre-check compares ``failure_description`` /
+    ``solution_description`` text, never a taxonomy triple, so the unique index is never
+    weakened by a pre-submission query.
+    """
+
+    failure_description: str = Field(min_length=1)
+    solution_description: str = Field(min_length=1)
+
+
+class CheckDuplicateResult(BaseModel):
+    """Result of the pre-submission duplicate pre-check (CONTRACT.md §10)."""
+
+    duplicate: bool
+    existing_id: Optional[str] = None
+    created_at: Optional[str] = None
+
+
 class ChatRequest(BaseModel):
     """Body of ``POST /chat`` (the Troubleshooting JS contract).
 
@@ -148,6 +172,8 @@ def create_app() -> FastAPI:
     """
     app = FastAPI(title="F&S WebUI", version="0.1.0")
     app.exception_handler(NotFoundError)(_on_not_found)
+    app.exception_handler(InvalidTaxonomyError)(_on_invalid_taxonomy)
+    app.exception_handler(DuplicateError)(_on_duplicate)
 
     app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 
@@ -430,6 +456,40 @@ def create_app() -> FastAPI:
             ]
         )
 
+    # --- Record submission (§3.3) ---
+    # The submit form (submit.html) posts a relative `/api/records` body and the
+    # `warn` UX pre-checks via `/api/records/check-duplicate`. On :9001 the API
+    # lives in the *other* process (:9000), so those calls would hit 404 unless
+    # this app serves them. Mounting the two JSON routes here closes the seam
+    # without a proxy: both UIs share the one `records_service` pipeline. The web
+    # actor uses `source="manual"` (the form never carries an API source) and the
+    # `web` actor id, matching the in-page edit path; the unique dedup index stays
+    # untouched, so a check-duplicate pre-check weakens nothing.
+
+    @app.post(
+        "/api/records",
+        status_code=201,
+        responses={409: {"model": "Error"}, 422: {"model": "Error"}},
+    )
+    def create_record(body: RecordIn) -> RecordOut:
+        """Submit a record (``source='manual'``, ``actor='web'``) via the pipeline."""
+        return submit(body, actor="web")
+
+    @app.post(
+        "/api/records/check-duplicate",
+        responses={200: {"model": "CheckDuplicateResult"}},
+    )
+    def check_duplicate_record(body: CheckDuplicateRequest) -> CheckDuplicateResult:
+        """Pre-submission dedup check (the ``warn`` UX) — the index never weakens."""
+        existing = check_duplicate(body.failure_description, body.solution_description)
+        if existing is None:
+            return CheckDuplicateResult(duplicate=False)
+        return CheckDuplicateResult(
+            duplicate=True,
+            existing_id=str(existing.existing_id),
+            created_at=existing.created_at.isoformat(),
+        )
+
     return app
 
 
@@ -524,6 +584,41 @@ def _product_label(
 def _on_not_found(request: Request, exc: NotFoundError) -> JSONResponse:
     """Map a missing record to ``404 not_found`` (archive/restore 404s)."""
     return JSONResponse(status_code=404, content={"error": {"code": "not_found"}})
+
+
+def _on_invalid_taxonomy(
+    request: Request, exc: InvalidTaxonomyError
+) -> JSONResponse:
+    """Map an out-of-vocabulary taxonomy triple to ``422 invalid_taxonomy``.
+
+    The submit form routes record submission through here so an invalid triple is
+    reported with the same envelope as the REST API, letting the client surface the
+    cause instead of a generic error.
+    """
+    return JSONResponse(
+        status_code=422,
+        content={"error": {"code": "invalid_taxonomy", "message": str(exc)}},
+    )
+
+
+def _on_duplicate(request: Request, exc: DuplicateError) -> JSONResponse:
+    """Map a duplicate record to ``409 duplicate`` plus the existing record.
+
+    Mirrors the REST API envelope (CONTRACT.md §10): a 409 carrying ``existing_id``
+    and ``created_at`` inside the error object so the submit form can point at the
+    record that already exists.
+    """
+    body = jsonable_encoder(
+        {
+            "error": {
+                "code": "duplicate",
+                "message": "a record with identical failure and solution exists",
+                "existing_id": str(exc.existing_id),
+                "created_at": exc.created_at,
+            }
+        }
+    )
+    return JSONResponse(status_code=409, content=body)
 
 
 app = create_app()
