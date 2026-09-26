@@ -24,6 +24,7 @@ to run repeatedly (idempotent).
 from __future__ import annotations
 
 import re
+import time
 from pathlib import Path
 from typing import Any
 
@@ -44,6 +45,16 @@ _PLACEHOLDER_RE = re.compile(r"{{\s*([A-Za-z_][\w.]*)\s*}}")
 from psycopg_pool import ConnectionPool
 
 _pool: ConnectionPool | psycopg.Connection | None = None
+
+# Fixed key for the migration advisory lock (``pg_advisory_lock(bigint)`` is
+# session-scoped). A memorable key keeps the constant readable; the value only
+# needs to be unique to this app among all advisory-lock users.
+_MIGRATION_LOCK_KEY = 0x5F56_5961_5F66  # "Fiffia_"
+
+# How long to wait for the migration lock during the boot race before giving
+# up (seconds). The first container migrates; the second parks here instead of
+# erroring, so whichever boot finishes first always wins the run.
+_MIGRATION_LOCK_TIMEOUT_S = 60.0
 
 
 def _resolve_dotted(path: str, root: Any) -> str:
@@ -110,33 +121,89 @@ def close_pool() -> None:
     _pool = None
 
 
-def _create_schema_migrations_table() -> None:
-    """Ensure the ``schema_migrations`` tracking table exists."""
-    conn = _checkout()
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                CREATE TABLE IF NOT EXISTS schema_migrations (
-                    filename   TEXT PRIMARY KEY,
-                    applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+def _open_dedicated_conn() -> psycopg.Connection:
+    """Open a single bare connection outside the pool for lock-held work.
+
+    ``run_migrations()`` must hold a session-scoped advisory lock for the whole
+    of migration while every running process waits for the same lock. Holding a
+    pooled connection for that span would risk a pool deadlock if ``pool_min``
+    connections are already checked out, so the lock lives on a private,
+    uncached connection that is opened when the lock is taken and closed when it
+    is released.
+    """
+
+    return psycopg.connect(settings.db.dsn, connect_timeout=5)
+
+
+def _acquire_migration_lock() -> psycopg.Connection:
+    """Acquire the migration advisory lock, returning the holding connection.
+
+    ``pg_advisory_lock(bigint)`` is session-scoped and blocks once held, which
+    makes it unsuitable for a plain wait inside the boot race (a second container
+    would hold a pooled connection while waiting and could deadlock a
+    ``pool_min == 1`` pool). Instead we take the lock non-blockingly and poll
+    ``pg_try_advisory_lock`` until it succeeds or the timeout elapses. On timeout
+    we release the connection and surface a clear error rather than leaving a
+    dangling lock or a half-run migration.
+    """
+
+    deadline = time.monotonic() + _MIGRATION_LOCK_TIMEOUT_S
+    while True:
+        conn = _open_dedicated_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT pg_try_advisory_lock(%s)",
+                    (_MIGRATION_LOCK_KEY,),
                 )
-                """
+                if cur.fetchone()[0]:
+                    return conn
+        except Exception:
+            conn.close()
+            raise
+
+        if time.monotonic() >= deadline:
+            conn.close()
+            raise RuntimeError(
+                "timed out acquiring migration advisory lock "
+                f"(after {_MIGRATION_LOCK_TIMEOUT_S:.0f}s) — is another runner "
+                "holding it?"
             )
-            conn.commit()
-    finally:
-        _release(conn)
+        conn.close()
+        time.sleep(0.5)
 
 
-def _applied_files() -> set[str]:
-    """Return the set of migration filenames already recorded."""
-    conn = _checkout()
+def _release_migration_lock(conn: psycopg.Connection) -> None:
+    """Release the migration advisory lock and close the holding connection."""
+
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT filename FROM schema_migrations")
-            return {row[0] for row in cur.fetchall()}
+            cur.execute("SELECT pg_advisory_unlock(%s)", (_MIGRATION_LOCK_KEY,))
     finally:
-        _release(conn)
+        conn.close()
+
+
+def _create_schema_migrations_table(conn: psycopg.Connection) -> None:
+    """Ensure the ``schema_migrations`` tracking table exists (on ``conn``)."""
+
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS schema_migrations (
+                filename   TEXT PRIMARY KEY,
+                applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+            """
+        )
+        conn.commit()
+
+
+def _applied_files(conn: psycopg.Connection) -> set[str]:
+    """Return the set of migration filenames already recorded (on ``conn``)."""
+
+    with conn.cursor() as cur:
+        cur.execute("SELECT filename FROM schema_migrations")
+        return {row[0] for row in cur.fetchall()}
 
 
 def run_migrations() -> list[str]:
@@ -146,29 +213,36 @@ def run_migrations() -> list[str]:
     and recorded in ``schema_migrations``. Running this again after everything is
     applied returns an empty list (idempotent).
 
-    Returns the list of filenames that were newly applied.
+    A single session-scoped ``pg_advisory_lock`` is held for the whole run on a
+    dedicated connection, so concurrent boot migrations in separate containers
+    serialise instead of racing the same files.
     """
-    get_pool()
-    _create_schema_migrations_table()
-    applied = _applied_files()
 
-    applied_files: list[str] = []
-    for path in sorted(_MIGRATIONS_DIR.glob("*.sql")):
-        if path.name in applied:
-            continue
+    # Hold the advisory lock for the entire migration. All SQL below runs on
+    # this connection; no additional pooled connection is checked out while the
+    # lock is held, so a ``pool_min == 1`` pool can never deadlock.
+    lock_conn = _acquire_migration_lock()
+    try:
+        _create_schema_migrations_table(lock_conn)
+        applied = _applied_files(lock_conn)
 
-        sql = _substitute(path.read_text(encoding="utf-8"), settings)
-        conn = _checkout()
-        try:
-            conn.execute(sql)
-            conn.commit()
-            conn.execute(
-                "INSERT INTO schema_migrations (filename) VALUES (%s)",
-                (path.name,),
-            )
-            conn.commit()
-        finally:
-            _release(conn)
-        applied_files.append(path.name)
+        applied_files: list[str] = []
+        for path in sorted(_MIGRATIONS_DIR.glob("*.sql")):
+            if path.name in applied:
+                continue
 
-    return applied_files
+            sql = _substitute(path.read_text(encoding="utf-8"), settings)
+            with lock_conn.cursor() as cur:
+                cur.execute(sql)
+            lock_conn.commit()
+            with lock_conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO schema_migrations (filename) VALUES (%s)",
+                    (path.name,),
+                )
+            lock_conn.commit()
+            applied_files.append(path.name)
+
+        return applied_files
+    finally:
+        _release_migration_lock(lock_conn)
