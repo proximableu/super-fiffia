@@ -91,7 +91,7 @@ select:focus, input:focus, textarea:focus {
     {% set error_flag = (edit == 'error') %}
 
     {% if success_flag or duplicate_flag or notfound_flag or invalid_flag or error_flag %}
-    <div id="indicator" class="indicator error" role="status" aria-live="polite"
+    <div id="indicator" class="indicator {% if success_flag %}indicator success{% else %}indicator error{% endif %}" role="status" aria-live="polite"
          data-i18n-err="duplicate">{% if duplicate_flag %}{% if "en" in lang %}Already exists — nothing saved.{% else %}Finns redan — ingenting sparad.{% endif %}{% elif notfound_flag %}{% if "en" in lang %}The record no longer exists.{% else %}Posten finns inte längre.{% endif %}{% elif invalid_flag %}{% if "en" in lang %}Invalid taxonomy or fields.{% else %}Fel taxonomi eller ogifta fält.{% endif %}{% elif error_flag %}{% if "en" in lang %}Something went wrong saving.{% else %}Något gick vid sparandet.{% endif %}{% else %}{% if "en" in lang %}Saved.{% else %}Sparad.{% endif %}{% endif %}</div>
     {% else %}
     <div id="indicator" class="indicator"></div>
@@ -160,7 +160,7 @@ select:focus, input:focus, textarea:focus {
 
         <div class="actions">
             <button type="submit" class="action primary" id="save-btn" data-i18n="save">Spara ändringar</button>
-            <a class="action secondary" href="/ingest/list" data-i18n="cancel">Avbryt</a>
+            <a class="action secondary" href="/ingest" data-i18n="cancel">Avbryt</a>
         </div>
 
         <span class="id" id="record-id" style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--muted);">#{{ record.id }}</span>
@@ -332,7 +332,12 @@ select:focus, input:focus, textarea:focus {
             event.preventDefault();
             return;
         }
-        hideBusy();
+        // Valid: show the busy spinner for the synchronous server round-trip,
+        // then submit the form. (Was previously a bare hideBusy() on the valid
+        // path — the spinner never rendered because showBusy() was never called.)
+        event.preventDefault();
+        showBusy();
+        form.submit();
     });
 
     document.getElementById("optional-toggle").addEventListener("click", function () {

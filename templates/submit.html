@@ -445,12 +445,15 @@ select:focus, input:focus, textarea:focus {
                     resetForm();
                 } else if (resp.status === 409) {
                     showDuplicate(data.error && data.error.existing_id, data.error && data.error.created_at);
+                    hideBusy();
                 } else {
                     showError((data.error && data.error.message) || I18N[LANG].error);
+                    hideBusy();
                 }
             })
             .catch(function () {
                 showError(I18N[LANG].error);
+                hideBusy();
             });
     }
 
