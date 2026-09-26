@@ -102,6 +102,72 @@ def test_search_rag_dispatches_and_returns():
     assert cs.call_count == 2
 
 
+def test_rag_first_uses_rag_then_falls_back_to_records(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``rag_first=True`` queries RAG first, then records only when RAG is empty."""
+    actions = [
+        AgentAction(thought="rag", action="search_rag", query="q"),
+        AgentAction(thought="done", action="final_answer", answer="ok"),
+    ]
+    rag = MagicMock(return_value=[])
+    fs = MagicMock(
+        return_value=[_hit(source="records", id="22222222-0000-0000-0000-000000000002")]
+    )
+
+    monkeypatch.setattr(agent, "chat_structured", _actions(*actions))
+    monkeypatch.setattr(agent, "retrieve_rag", rag)
+    monkeypatch.setattr(agent, "retrieve_fs", fs)
+
+    out = run_agent(Scope(), [ChatTurn(role="user", content="q")], lang="en", rag_first=True)
+
+    assert out.ended_with == "final_answer"
+    assert rag.call_count == 1
+    assert fs.call_count == 1
+    # The records hit was collected from the fallback leg.
+    assert [str(h.id) for h in out.sources] == ["22222222-0000-0000-0000-000000000002"]
+
+
+def test_rag_first_does_not_query_records_when_rag_returns(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``rag_first=True`` short-circuits: records are not queried when RAG hits."""
+    actions = [
+        AgentAction(thought="rag", action="search_rag", query="q"),
+        AgentAction(thought="done", action="final_answer", answer="ok"),
+    ]
+    rag = MagicMock(return_value=[_hit(source="rag")])
+
+    monkeypatch.setattr(agent, "chat_structured", _actions(*actions))
+    monkeypatch.setattr(agent, "retrieve_rag", rag)
+    monkeypatch.setattr(agent, "retrieve_fs", MagicMock())
+
+    run_agent(Scope(), [ChatTurn(role="user", content="q")], lang="en", rag_first=True)
+
+    assert rag.call_count == 1
+    assert agent.retrieve_fs.call_count == 0
+
+
+def test_rag_only_never_queries_records(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``rag_only=True`` (the ``#docs`` tag) only queries RAG; records are ignored.
+
+    Even when the model emits ``search_records`` the records leg is never run.
+    """
+    actions = [
+        AgentAction(thought="records", action="search_records", query="q"),
+        AgentAction(thought="done", action="final_answer", answer="ok"),
+    ]
+    rag = MagicMock(return_value=[_hit(source="rag")])
+
+    monkeypatch.setattr(agent, "chat_structured", _actions(*actions))
+    monkeypatch.setattr(agent, "retrieve_rag", rag)
+    monkeypatch.setattr(agent, "retrieve_fs", MagicMock())
+
+    out = run_agent(
+        Scope(), [ChatTurn(role="user", content="q")], lang="en", rag_only=True
+    )
+
+    assert out.ended_with == "final_answer"
+    assert rag.call_count == 1
+    assert agent.retrieve_fs.call_count == 0
+
+
 def test_ask_clarification_yields():
     actions = [AgentAction(thought="?", action="ask_clarification", clarification="which model?")]
 

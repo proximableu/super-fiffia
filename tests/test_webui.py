@@ -237,7 +237,8 @@ def test_chat_route_calls_agent_and_returns_contract(monkeypatch: pytest.MonkeyP
         ended_with="final_answer",
     )
     monkeypatch.setattr(
-        "app.chat.run_agent", lambda scope, messages, lang, budget: outcome
+        "app.chat.run_agent",
+        lambda scope, messages, lang, budget, **_: outcome,
     )
 
     scope = Scope(category="network")
@@ -266,7 +267,7 @@ def test_chat_route_folds_turn_into_history(monkeypatch: pytest.MonkeyPatch) -> 
 
     seen: dict[str, int] = {}
 
-    def _run_agent(scope, messages, lang, budget):
+    def _run_agent(scope, messages, lang, budget, **_):
         seen["count"] = len(messages)
         return AgentOutcome(answer="ok", sources=[], turns_used=1, ended_with="final_answer")
 
@@ -296,7 +297,7 @@ def test_chat_route_error_returns_error_contract(monkeypatch: pytest.MonkeyPatch
     See bug_report_2.md B2.
     """
 
-    def _raise(scope, messages, lang, budget):
+    def _raise(scope, messages, lang, budget, **_):
         raise RuntimeError("llm exploded")
 
     monkeypatch.setattr("app.chat.run_agent", _raise)

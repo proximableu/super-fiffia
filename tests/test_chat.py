@@ -45,7 +45,8 @@ def _script(monkeypatch, outcome):
     so only the reference in the chat module is the one that gets called.
     """
     monkeypatch.setattr(
-        "app.chat.run_agent", lambda scope, messages, lang, budget: outcome
+        "app.chat.run_agent",
+        lambda scope, messages, lang, budget, **_: outcome,
     )
 
 
@@ -101,7 +102,7 @@ def test_agent_gets_full_history(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings.agent, "max_turns", 5)
     seen: list[Sequence] = []
 
-    def spy(_scope, messages, _lang, budget):
+    def spy(_scope, messages, _lang, budget, **_):
         seen.append(list(messages))
         return _outcome()
 
