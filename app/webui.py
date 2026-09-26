@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import urllib.parse
 from pathlib import Path
+from typing import Any, Literal
 from uuid import UUID
 
 from fastapi import FastAPI, Query, Request
@@ -49,13 +50,11 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
+from app.chat import chat, clear_session
 from app.config import settings, taxonomy
 from app.db import _checkout, _release
-from app.taxonomy import (
-    article_numbers_for_product,
-    products_for_category,
-)
 from app.records_repo import (
+    ChatTurn,
     DuplicateError,
     NotFoundError,
     RecordIn,
@@ -68,6 +67,10 @@ from app.records_service import (
     archive_record,
     restore_record,
     update_record,
+)
+from app.taxonomy import (
+    article_numbers_for_product,
+    products_for_category,
 )
 
 # Templates live directly under ``templates/``.
@@ -117,6 +120,26 @@ class TaxonomyCategoriesResult(BaseModel):
     items: list[TaxonomyItem] = []
 
 
+class ChatRequest(BaseModel):
+    """Body of ``POST /chat`` (the Troubleshooting JS contract).
+
+    Mirrors the REST ``ChatRequest`` with the UI-selected ``scope`` header
+    (category / product / article_number / failure_description) and the session
+    token the client mints into ``localStorage`` and posts in the body.
+    """
+
+    messages: list[ChatTurn]
+    scope: Scope | None = None
+    lang: Literal["sv", "en"] = "sv"
+    session_token: str
+
+
+class ChatClearRequest(BaseModel):
+    """Body of ``POST /chat/clear``."""
+
+    session_token: str
+
+
 def create_app() -> FastAPI:
     """Build and return the WebUI application (``uvicorn app.webui:app``).
 
@@ -150,6 +173,33 @@ def create_app() -> FastAPI:
             "troubleshooting.html",
             {"lang": _lang_from_request(request)},
         )
+
+    @app.post("/chat", status_code=200, response_model=None)
+    def chat_endpoint(body: ChatRequest) -> dict[str, Any]:
+        """One orchestrator turn for the Troubleshooting form (bug #3.2).
+
+        The client posts ``{scope, messages, lang, session_token}`` (see
+        ``troubleshooting.html``) and reads ``{answer, sources, turns_used}``; on
+        failure it reads ``{error: {message}}`` so this mirrors the REST
+        ``/api/chat`` contract with an added per-session ``session_token``.
+        ``response_model=None`` (and the ``dict`` return type) let this route return
+        either the chat contract or the ``{"error": ...}`` shape without FastAPI
+        trying to validate both through a single model.
+        """
+        try:
+            return chat(body.scope, body.messages, body.lang, body.session_token).model_dump()
+        except Exception as exc:  # noqa: BLE001 - surface any agent failure as JSON
+            return {"error": {"message": str(exc)}}
+
+    @app.post("/chat/clear", status_code=200)
+    def chat_clear_endpoint(body: ChatClearRequest) -> dict[str, bool]:
+        """Drop the named conversation's history (bug #3.2).
+
+        The client posts ``{session_token}`` and expects a 200 JSON body; the call
+        is a no-op when the token is unknown, matching the client's optimistic UI.
+        """
+        clear_session(body.session_token)
+        return {"cleared": True}
 
     @app.post("/lang")
     def set_lang(request: Request) -> RedirectResponse:

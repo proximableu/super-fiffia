@@ -5,19 +5,22 @@ purely-HTTP API tests (``tests/test_api.py``) do not reach:
 
     * the stage + nav + language routes,
     * the ``category -> product -> article_number`` cascade endpoints
-      (``GET /api/taxonomy/{categories,products,articles}``), and
-    * that the two pages render their form markup with no hard-coded label leaks.
+      (``GET /api/taxonomy/{categories,products,articles}``),
+    * the chat route handlers ``POST /chat`` / ``POST /chat/clear`` (bug #3.2),
+      scripted through ``app.chat.run_agent`` so no Ollama or database is needed,
+    * and that the two pages render their form markup with no hard-coded label leaks.
 
-The taxonomy endpoints read only ``config/taxonomy.yaml``, so they run fully in
-process with the real FastAPI test client and **no database** — they do not touch
-the ``records`` tables or Ollama. Ollama-dependent routes (``/chat``, ``/lang``
-that resolves the agent) are out of scope for this module.
+The taxonomy and chat endpoints read only ``config/taxonomy.yaml`` / an
+in-memory history dict, so they run fully in process with the real FastAPI test
+client and **no database** — they do not touch the ``records`` tables or Ollama
+directly.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.webui import create_app
@@ -192,3 +195,130 @@ def test_rendered_select_options_have_no_req_markup():
     assert '<option' in select_block
     assert '<span class="req"' not in select_block
     assert "——" in select_block
+
+
+# --------------------------------------------------------------------------- #
+# Chat routes — bug #3.2 (POST /chat + POST /chat/clear in webui.py)
+# --------------------------------------------------------------------------- #
+@pytest.fixture(autouse=True)
+def _reset_history() -> None:
+    """Drop accumulated chat history after each test.
+
+    The conversation history lives in a single module-level dict in
+    ``app.chat`` keyed by session token; without isolation a turn in one test
+    leaks into the next and ``session_token`` isolation can no longer be asserted.
+    """
+    yield
+    from app import chat as chat_mod
+
+    chat_mod._history.clear()
+
+
+def test_chat_route_calls_agent_and_returns_contract(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``POST /chat`` folds the user turn into history and returns the contract.
+
+    The client posts ``{scope, messages, lang, session_token}`` (see
+    ``troubleshooting.html``) and reads ``{answer, sources, turns_used}``; the
+    agent is scripted so no Ollama/DB is needed.
+    """
+    from app.agent import AgentOutcome
+    from app.records_repo import ChatTurn, Scope
+
+    outcome = AgentOutcome(
+        answer="here is the fix",
+        sources=[],
+        turns_used=1,
+        ended_with="final_answer",
+    )
+    monkeypatch.setattr(
+        "app.chat.run_agent", lambda scope, messages, lang, budget: outcome
+    )
+
+    scope = Scope(category="network")
+    messages = [ChatTurn(role="user", content="wifi is down")]
+    client = _client()
+    resp = client.post(
+        "/chat",
+        json={
+            "scope": scope.model_dump(),
+            "messages": [c.model_dump() for c in messages],
+            "lang": "en",
+            "session_token": "sess-chat-route",
+        },
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["answer"] == "here is the fix"
+    assert body["sources"] == []
+    assert body["turns_used"] == 1
+
+
+def test_chat_route_folds_turn_into_history(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``POST /chat`` appends the user turn to that session's history."""
+    from app.agent import AgentOutcome
+
+    seen: dict[str, int] = {}
+
+    def _run_agent(scope, messages, lang, budget):
+        seen["count"] = len(messages)
+        return AgentOutcome(answer="ok", sources=[], turns_used=1, ended_with="final_answer")
+
+    monkeypatch.setattr("app.chat.run_agent", _run_agent)
+
+    client = _client()
+    body = {
+        "scope": {},
+        "messages": [{"role": "user", "content": "turn one"}],
+        "lang": "en",
+        "session_token": "sess-history",
+    }
+    client.post("/chat", json=body)
+    client.post("/chat", json=body)
+
+    # Each turn folds the new user turn into the running history and appends an
+    # assistant turn, so the second call sees three turns (user, assistant, user).
+    assert seen["count"] == 3
+
+
+def test_chat_route_error_returns_error_contract(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``POST /chat`` maps an agent failure to ``{error: {message}}`` (200).
+
+    The Troubleshooting JS reads ``data.error.message``, so a raised agent error
+    must come back as that shape with a 200 status, not a 500.
+    """
+
+    def _raise(scope, messages, lang, budget):
+        raise RuntimeError("llm exploded")
+
+    monkeypatch.setattr("app.chat.run_agent", _raise)
+
+    resp = _client().post(
+        "/chat",
+        json={"scope": {}, "messages": [], "lang": "en", "session_token": "sess-err"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["error"]["message"] == "llm exploded"
+
+
+def test_clear_route_drops_history(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``POST /chat/clear`` drops the named session's history."""
+    from app import chat as chat_mod
+
+    # Prime the history directly, then clear through the route.
+    chat_mod._history["sess-clear"] = [
+        {"role": "user", "content": "hi"}
+    ]
+    assert "sess-clear" in chat_mod._history
+
+    resp = _client().post("/chat/clear", json={"session_token": "sess-clear"})
+    assert resp.status_code == 200
+    assert resp.json() == {"cleared": True}
+    assert "sess-clear" not in chat_mod._history
+
+
+def test_clear_missing_session_is_noop() -> None:
+    """``POST /chat/clear`` on an unknown token returns 200 without error."""
+    resp = _client().post("/chat/clear", json={"session_token": "never-existed"})
+    assert resp.status_code == 200
+    assert resp.json() == {"cleared": True}
