@@ -273,16 +273,23 @@ def _register_middleware(app: FastAPI) -> None:
         request_id = str(uuid4())
         with LogContext(request_id=request_id):
             start = time.perf_counter()
+            response: Response | None = None
             try:
                 response = await call_next(request)
             finally:
                 latency_ms = (time.perf_counter() - start) * 1000
+                # Guard against an escaped exception from ``call_next`` (the app's
+                # ``Exception`` handler below only runs per-route, so a middleware
+                # level ``CancelledError`` etc. never assigns ``response``).
+                # A bare ``response.status_code`` here would raise ``NameError``
+                # and replace the original error; log the failure instead.
+                status = response.status_code if response is not None else 500
                 logger.info(
                     "http_request",
                     stage="app",
                     method=request.method,
                     path=request.url.path,
-                    status=response.status_code,
+                    status=status,
                     latency_ms=round(latency_ms, 2),
                 )
         response.headers["X-Request-Id"] = request_id
