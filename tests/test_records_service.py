@@ -152,7 +152,7 @@ def test_bulk_reports_duplicates(db_conn):
     outcome = bulk(items, actor="test")
 
     assert outcome["created"] == 1
-    assert outcome["duplicate"] == 1
+    assert outcome["updated"] == 1
     assert len(outcome["errors"]) == 1
     assert outcome["errors"][0]["code"] == "duplicate"
 

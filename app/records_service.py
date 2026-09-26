@@ -232,30 +232,47 @@ def restore_record(record_id: UUID, actor: str = "web") -> RecordOut:
 
 
 def bulk(items: list[RecordIn], actor: str = "web") -> dict:
-    """Bulk-import ``items``, one submit per item.
+    """Bulk-import ``items``, one item per transaction.
 
-    Each item runs its own :func:`submit` in isolation, so one bad item (bad
-    taxonomy, a colliding hash, a DB error) is recorded and skipped instead of
-    aborting the whole batch. A duplicate is reported as an ``"duplicate"``
-    error rather than silently creating a second row.
+    Each item is processed in isolation, so one bad item (bad taxonomy, a
+    colliding hash, a missing id, a DB error) is recorded and skipped instead of
+    aborting the whole batch. A :class:`~app.api.RecordBulkItem` with an ``id``
+    updates that existing record via :func:`update_record`; one without inserts a
+    new record via :func:`submit`. An item whose content already exists elsewhere
+    is reported as an ``"duplicate"`` error and counted as ``updated`` — it is
+    never silently turned into a second row.
 
-    :return: ``{"created": int, "duplicate": int, "errors": [dict]}``` where each
+    :return: ``{"created": int, "updated": int, "errors": [dict]}``` where each
         error is ``{"index": int, "code": str, "message": str}```.
     """
     created = 0
-    duplicate = 0
+    updated = 0
     errors: list[dict] = []
 
     for index, item in enumerate(items):
+        has_id = getattr(item, "id", None) is not None
         try:
-            submit(item, actor)
-            created += 1
+            record = (
+                update_record(item.id, item, actor=actor)
+                if has_id
+                else submit(item, actor)
+            )
+            if has_id:
+                updated += 1
+            else:
+                created += 1
+            logger.info(
+                "bulk item %d %s record %s",
+                index,
+                "updated" if has_id else "created",
+                record.id,
+            )
         except InvalidTaxonomyError as exc:
             errors.append(
                 {"index": index, "code": "invalid_taxonomy", "message": str(exc)}
             )
         except DuplicateError as exc:
-            duplicate += 1
+            updated += 1
             errors.append(
                 {
                     "index": index,
@@ -263,13 +280,19 @@ def bulk(items: list[RecordIn], actor: str = "web") -> dict:
                     "message": f"duplicate of {exc.existing_id}",
                 }
             )
+        except FileNotFoundError as exc:
+            errors.append(
+                {"index": index, "code": "not_found", "message": str(exc)}
+            )
         except Exception as exc:  # noqa: BLE001 - isolate a single bad item
             errors.append({"index": index, "code": "internal", "message": str(exc)})
 
+    duplicates = sum(1 for e in errors if e["code"] == "duplicate")
     logger.info(
-        "bulk ingest finished: %d created, %d duplicates, %d errors",
+        "bulk ingest finished: %d created, %d updated, %d duplicates, %d errors",
         created,
-        duplicate,
+        updated,
+        duplicates,
         len(errors),
     )
-    return {"created": created, "duplicate": duplicate, "errors": errors}
+    return {"created": created, "updated": updated, "errors": errors}
