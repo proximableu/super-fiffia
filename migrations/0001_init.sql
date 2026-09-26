@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS records (
     created_by           TEXT,
     status               TEXT        NOT NULL DEFAULT 'active',   -- active | archived
     -- retrieval
-    embedding            vector(768),
+    embedding            vector(1024),
     fts                  tsvector,
     -- embedding provenance (safe model upgrades)
     embed_model          TEXT,
@@ -81,7 +81,7 @@ CREATE TABLE IF NOT EXISTS rag_chunks (
     section_header TEXT,
     chunk_text     TEXT NOT NULL,
     content_hash   CHAR(64) NOT NULL,        -- sha256(source_file + "\x00" + chunk_text)
-    embedding      vector(768),
+    embedding      vector(1024),
     fts            tsvector,
     created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );

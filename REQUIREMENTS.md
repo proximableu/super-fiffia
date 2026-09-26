@@ -43,7 +43,7 @@ A **backend API** exposes the same data operations (CRUD + retrieval) for use **
 - **FR-1.6** The WebUI shall allow **listing** records with filtering by `category`, `product`, `article_number`, status, and free-text query, plus **editing** and **archiving/restoring** a record (soft delete — see FR-1.11).
 - **FR-1.7** The system shall compute a **content hash** (MD5) of the normalized `failure_description` + `solution_description` (failure+solution only) and **block duplicate** submissions by default (`409` + existing id). See `F&S_REQUIREMENTS.md` §5–6.
 - **FR-1.8** Records may be submitted **manually** (WebUI) or **automatically** (REST API, e.g., a script reading an external DB); **both paths run the identical pipeline** (validate → dedup → embed → insert).
-- **FR-1.9** On create/update, the system shall compute and store the **embedding** of the `failure_description` (768 dimensions), together with embedding provenance (`embed_model`, `embed_dim`).
+- **FR-1.9** On create/update, the system shall compute and store the **embedding** of the `failure_description` (1024 dimensions), together with embedding provenance (`embed_model`, `embed_dim`).
 - **FR-1.10** The backend API shall support **bulk** create/upsert of records (used by the external script), per-item transactional.
 - **FR-1.11** Deletion shall be **soft only**: a record is archived (`status='archived'`) or restored (`status='active'`); the system shall never hard-delete a record row.
 
@@ -71,7 +71,7 @@ A **backend API** exposes the same data operations (CRUD + retrieval) for use **
 
 - **FR-4.1** The system shall maintain a **separate table** (`rag_chunks`) for the RAG documentation corpus, distinct from the `records` table, in the same Postgres database.
 - **FR-4.2** The RAG corpus consists of **chunks of technical documentation and instructions**.
-- **FR-4.3** A **simple ingestion path** (library function + CLI script + API trigger) shall read raw documents, split them into chunks, compute 768-dim embeddings, and store them (idempotently) in the RAG table.
+- **FR-4.3** A **simple ingestion path** (library function + CLI script + API trigger) shall read raw documents, split them into chunks, compute 1024-dim embeddings, and store them (idempotently) in the RAG table.
 - **FR-4.4** Each RAG chunk shall retain provenance (source file and section header) for citation.
 
 ### 3.5 Backend API
@@ -93,7 +93,7 @@ A **backend API** exposes the same data operations (CRUD + retrieval) for use **
 ### 3.8 LLM / embedding provider
 
 - **FR-8.1** The system shall use a (local or remote) **Ollama server** for both the LLM and embeddings, called over its HTTP API.
-- **FR-8.2** Embedding dimension is fixed at **768**.
+- **FR-8.2** Embedding dimension is fixed at **1024**.
 - **FR-8.3** The LLM shall be a **21B–35B** class model. An **instruct** model is the default; the architecture shall allow swapping in a different (e.g. reasoning) model without structural change.
 - **FR-8.4** The LLM/embedding access shall be **abstracted behind a provider interface** so that an **OpenAI-compatible (cloud) endpoint** can be used in the future without changing the rest of the system.
 
@@ -124,7 +124,7 @@ A **backend API** exposes the same data operations (CRUD + retrieval) for use **
 | C-6 | Scale | Tens of thousands of records; small team |
 | C-7 | Ollama | Local/remote server; **one request at a time** (serialize via shared lock) |
 | C-8 | Future LLM path | OpenAI-compatible (cloud) via provider abstraction |
-| C-9 | Embedding dim | **768** |
+| C-9 | Embedding dim | **1024** |
 | C-10 | LLM size | 21B–35B; instruct default |
 | C-11 | Agent decision | Structured output (`AgentAction`) |
 | C-12 | Reranking | **None** in v1 — RRF + top-k only |
@@ -158,7 +158,7 @@ A **backend API** exposes the same data operations (CRUD + retrieval) for use **
 
 ## 7. High-Level Acceptance Criteria
 
-1. A technician can create a record via the form; it is stored with a 768-dim embedding and is immediately retrievable.
+1. A technician can create a record via the form; it is stored with a 1024-dim embedding and is immediately retrievable.
 2. Given a failure description, the agent retrieves relevant records **and/or** RAG chunks, may ask a clarifying question, and returns a solution in the selected language with cited sources.
 3. The agent respects the turn budget and always terminates with an answer.
 4. The external script can bulk-import records and run a hybrid search purely via the REST API.

@@ -80,7 +80,7 @@ CREATE TABLE records (
     status               TEXT        NOT NULL DEFAULT 'active',   -- active | archived
 
     -- retrieval
-    embedding            vector(768),
+    embedding            vector(1024),
     fts                  tsvector,
 
     -- embedding provenance (safe model upgrades)

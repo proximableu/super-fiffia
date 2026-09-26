@@ -33,11 +33,11 @@ from app.records_repo import (
     update,
 )
 
-# A 768-dimensional fake embedding so the pipeline runs without a live Ollama
-# and the row still fits the ``embedding vector(768)`` column.
-_EMBEDDING = [0.1] * 768
+# A 1024-dimensional fake embedding so the pipeline runs without a live Ollama
+# and the row still fits the ``embedding vector(1024)`` column.
+_EMBEDDING = [0.1] * 1024
 EMBED_MODEL = "test-model"
-EMBED_DIM = 768
+EMBED_DIM = 1024
 
 
 def _record(**kw) -> RecordIn:

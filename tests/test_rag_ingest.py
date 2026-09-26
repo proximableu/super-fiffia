@@ -50,7 +50,7 @@ class _FakeEmbed:
     def __call__(self, texts: list[str]) -> list[list[float]]:
         self.calls += 1
         self.inputs.extend(texts)
-        return [[0.0] * 768 for _ in texts]
+        return [[0.0] * 1024 for _ in texts]
 
 
 def test_chunk_basic() -> None:

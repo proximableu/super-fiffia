@@ -136,7 +136,7 @@ def test_lock_serializes_concurrent_calls(monkeypatch: pytest.MonkeyPatch) -> No
         with guard:
             active -= 1
         n = len(json["input"])
-        return _make_resp(200, {"embeddings": [[0.1] * 768 for _ in range(n)]})
+        return _make_resp(200, {"embeddings": [[0.1] * 1024 for _ in range(n)]})
 
     monkeypatch.setattr(ollama._HTTP, "post", fake_post)
 

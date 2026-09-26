@@ -31,10 +31,10 @@ from app.records_service import (
 )
 
 
-# A 768-dimensional fake embedding so the pipeline runs with no live Ollama
-# and the row still fits the ``embedding vector(768)`` column.
+# A 1024-dimensional fake embedding so the pipeline runs with no live Ollama
+# and the row still fits the ``embedding vector(1024)`` column.
 def _fake_embed(texts):
-    return [[0.1] * 768 for _ in texts]
+    return [[0.1] * 1024 for _ in texts]
 
 
 def _record(**kw) -> RecordIn:

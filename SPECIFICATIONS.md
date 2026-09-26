@@ -58,7 +58,7 @@ One **application process** (FastAPI, uvicorn) serves both the WebUI (HTML/HTMX 
 | WebUI | **FastAPI + Jinja2 + HTMX** | Server-rendered, HTML5, partial swaps. No React/Vue, no SPA. |
 | App framework | FastAPI (Starlette) | One process serves `/` pages and `/api/*` JSON. |
 | DB access | **psycopg v3** (sync) + connection pool | Sync endpoints run in Starlette's threadpool; bound parameters everywhere. |
-| Vector store | **PostgreSQL + pgvector** | `vector(768)`, HNSW cosine index. |
+| Vector store | **PostgreSQL + pgvector** | `vector(1024)`, HNSW cosine index. |
 | Lexical search | Postgres `tsvector` (`simple` config, trigger-weighted) + GIN | Language-robust; optional `pg_trgm` later. |
 | LLM / embeddings | **Ollama** over HTTP (`httpx`) | Single shared `threading.Lock` — one request at a time (NFR-2). |
 | Future LLM | OpenAI-compatible endpoint | Swap inside `app/ollama.py`-equivalent provider seam (C-8). |
@@ -110,7 +110,7 @@ Single table. One row = one failure↔solution pair.
 | `source` | `text` NOT NULL default `'manual'` | `manual` \| `import` \| `api`. |
 | `created_by` | `text` NULL | `webui` / `api` / client name. |
 | `status` | `text` NOT NULL default `'active'` | `active` \| `archived` (soft delete). |
-| `embedding` | `vector(768)` | Embedding of `failure_description`. |
+| `embedding` | `vector(1024)` | Embedding of `failure_description`. |
 | `fts` | `tsvector` | Trigger-maintained; failure weighted A, solution weighted B. |
 | `embed_model` / `embed_dim` | `text` / `int` | Embedding provenance (safe model upgrades). |
 | `created_at` / `updated_at` | `timestamptz` | `created_at` immutable; `updated_at` via trigger. |
@@ -131,7 +131,7 @@ Indexes: unique partial on `content_hash WHERE status='active'` (dedup authority
 | `section_header` | `text` NULL | Nearest heading. |
 | `chunk_text` | `text` NOT NULL | |
 | `content_hash` | `char(64)` NOT NULL | sha256(source_file + "\0" + chunk_text) — traceability. |
-| `embedding` | `vector(768)` | |
+| `embedding` | `vector(1024)` | |
 | `fts` | `tsvector` | Trigger-maintained; header weighted A, text weighted B. |
 | `created_at` | `timestamptz` | |
 
@@ -144,7 +144,7 @@ Indexes: unique `(source_file, content_hash)` (idempotency authority); HNSW on `
 **Goal:** scope by structured metadata first, then combine semantic + lexical ranking, language-robust.
 
 0. **Structured scoping (first)** — when the caller has selected `category` and `product` (and optionally `article_number`), the candidate set is first restricted by a plain indexed query `WHERE category=? AND product=? [AND article_number=?] AND status='active'`. All ranking below runs **within** that scoped set.
-1. **Semantic leg** — cosine nearest-neighbour on the 768-dim embedding (HNSW), top `POOL` (default 30).
+1. **Semantic leg** — cosine nearest-neighbour on the 1024-dim embedding (HNSW), top `POOL` (default 30).
 2. **Lexical leg** — `ts_rank` over `fts` using `plainto_tsquery('simple', q)`, top `POOL`.
    - `simple` config = tokenization **without stemming** → safe for mixed Swedish/English and technical tokens (part numbers, error codes).
    - Optional enhancement: `pg_trgm` `similarity()` for substring/partial-code matching (phase 2).
@@ -221,7 +221,7 @@ to context  to context
 ```
 app/ollama.py   — OLLAMA_LOCK: threading.Lock (module-level, shared)
                   ollama_post(path, payload) -> dict   # httpx POST, raises OllamaError
-app/embedding.py— embed(texts) -> list[list[float]]   # /api/embed, 768-dim, under lock
+app/embedding.py— embed(texts) -> list[list[float]]   # /api/embed, 1024-dim, under lock
                   EMBED_MODEL / EMBED_DIM; EmbeddingError on failure
 app/agent.py    — chat_structured(messages, schema)    # /api/chat with format=<json schema>
                   chat(messages) -> str                # plain completion
@@ -239,7 +239,7 @@ app/agent.py    — chat_structured(messages, schema)    # /api/chat with format
 1. Walk the source directory for `.md` / `.txt`.
 2. Split into chunks by heading/paragraph; target ~2000 chars with small overlap; capture the nearest heading as `section_header`.
 3. Prepend context (`source_file` + `section_header`) for embedding quality.
-4. `embed()` each new chunk (768-dim) — batched, under the Ollama lock.
+4. `embed()` each new chunk (1024-dim) — batched, under the Ollama lock.
 5. **Upsert** into `rag_chunks` keyed by `(source_file, content_hash)`; chunks already stored are not re-embedded. Re-running is safe.
 6. Log counts (files, chunks, embedded, upserted). `--dry-run` reports without writing.
 

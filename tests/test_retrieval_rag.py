@@ -2,7 +2,7 @@
 
 ``CONTRACT.md`` 8, ``AGENT.md`` T2.3. The fixture applies the migration and opens
 a connection to the dedicated test database, so ``retrieve_rag`` exercises the
-real ``rag_chunks`` schema: the ``vector(768)`` column, the GIN ``fts`` index and
+real ``rag_chunks`` schema: the ``vector(1024)`` column, the GIN ``fts`` index and
 the RRF ranking SQL.
 
 No live Ollama is needed: ``app.retrieval.embed`` is faked so the vector leg
@@ -28,7 +28,7 @@ import pytest
 from app.embedding import EmbeddingError, EMBED_DIM
 from app.retrieval import retrieve_rag
 
-# A 768-dimensional fake embedding so seeded chunks fit the ``embedding`` column
+# A 1024-dimensional fake embedding so seeded chunks fit the ``embedding`` column
 # without a live Ollama and so the corpus embeds consistently.
 _EMBEDDING = [0.1] * EMBED_DIM
 

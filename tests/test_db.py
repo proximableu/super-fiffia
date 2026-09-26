@@ -116,7 +116,7 @@ def test_rag_chunks_columns(db_conn):
     assert expected.issubset(_columns(db_conn, "rag_chunks"))
 
 
-def test_embedding_is_vector768(db_conn):
+def test_embedding_is_vector1024(db_conn):
     with db_conn.cursor() as cur:
         cur.execute(
             """
@@ -128,7 +128,7 @@ def test_embedding_is_vector768(db_conn):
             """
         )
         (att_type,) = cur.fetchone()
-    assert att_type == "vector(768)"
+    assert att_type == "vector(1024)"
 
 
 def test_no_hard_delete_index(db_conn):

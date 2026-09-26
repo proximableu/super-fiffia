@@ -72,13 +72,13 @@ def _seed() -> None:
                  created_at)
             VALUES
                 (gen_random_uuid(), 'Elektrik', 'Motor', 'ART-100', 'Motor startar inte',
-                 'Bytte kontakter', 'hashA', 'active', 'nomic', 768,
+                 'Bytte kontakter', 'hashA', 'active', 'snowflake-arctic-embed2:568m', 1024,
                  now() - interval '2 months'),
                 (gen_random_uuid(), 'Elektrik', 'Motor', NULL, 'Overbelastning',
-                 'Nedbring last', 'hashB', 'active', 'nomic', 768,
+                 'Nedbring last', 'hashB', 'active', 'snowflake-arctic-embed2:568m', 1024,
                  now() - interval '1 month'),
                 (gen_random_uuid(), 'Hydraulik', 'Pump', NULL, 'Tryckfall', 'Byt packning',
-                 'hashC', 'archived', 'nomic', 768, now());
+                 'hashC', 'archived', 'snowflake-arctic-embed2:568m', 1024, now());
             """
         )
 

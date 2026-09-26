@@ -7,7 +7,7 @@ time (NFR-2), so a burst of submissions must not overload it.
 
 ``EMBED_MODEL`` / ``EMBED_DIM`` are exposed from here so callers (repo, RAG) keep
 a single source of truth. ``EMBED_DIM`` matches the model's output width and the
-``vector(768)`` columns in ``migrations/0001_init.sql``; it is a property of the
+``vector(1024)`` columns in ``migrations/0001_init.sql``; it is a property of the
 model, not a per-deployment setting.
 """
 
@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 # The embedding model (from settings) and its fixed output width. EMBED_DIM is a
 # property of the model and must match the vector(...) columns in the schema.
 EMBED_MODEL: str = settings.ollama.embed_model
-EMBED_DIM: int = 768
+EMBED_DIM: int = 1024
 
 
 class EmbeddingError(RuntimeError):

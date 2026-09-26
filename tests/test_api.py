@@ -22,10 +22,10 @@ from app.api import _health
 from app.records_repo import RecordIn
 
 
-# A 768-dimensional fake embedding so submit/bulk runs with no live Ollama and
-# still fits the ``embedding vector(768)`` column.
+# A 1024-dimensional fake embedding so submit/bulk runs with no live Ollama
+# and still fits the ``embedding vector(1024)`` column.
 def _fake_embed(texts):
-    return [[0.1] * 768 for _ in texts]
+    return [[0.1] * 1024 for _ in texts]
 
 
 def _record(**kw) -> RecordIn:
@@ -59,8 +59,8 @@ def test_app_builds_with_expected_routes() -> None:
 def test_health_route_reports_llm_and_embed_models() -> None:
     """``GET /api/health`` reflects the configured model names."""
     body = _health()
-    assert body["llm_model"] == "qwen2.5:32b-instruct"
-    assert body["embed_model"] == "nomic-embed-text"
+    assert body["llm_model"] == "gemma4:e4b"
+    assert body["embed_model"] == "snowflake-arctic-embed2:568m"
 
 
 # --------------------------------------------------------------------------- #

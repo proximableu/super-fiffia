@@ -103,8 +103,8 @@ db:
   pool_max: 5
 ollama:
   base_url: "http://localhost:11434"
-  embed_model: "nomic-embed-text"     # must output 768 dims
-  llm_model: "qwen2.5:32b-instruct"   # 21B–35B instruct class
+  embed_model: "snowflake-arctic-embed2:568m"  # must output 1024 dims
+  llm_model: "gemma4:e4b"                       # 21B–35B instruct class
 retrieval:
   pool: 30          # candidates per leg before RRF
   top_k_records: 10 # final record hits returned
@@ -181,7 +181,7 @@ CREATE TABLE IF NOT EXISTS records (
     created_by           TEXT,
     status               TEXT        NOT NULL DEFAULT 'active',   -- active | archived
     -- retrieval
-    embedding            vector(768),
+    embedding            vector(1024),
     fts                  tsvector,
     -- embedding provenance (safe model upgrades)
     embed_model          TEXT,
@@ -243,7 +243,7 @@ CREATE TABLE IF NOT EXISTS rag_chunks (
     section_header TEXT,
     chunk_text     TEXT NOT NULL,
     content_hash   CHAR(64) NOT NULL,        -- sha256(source_file + "\x00" + chunk_text)
-    embedding      vector(768),
+    embedding      vector(1024),
     fts            tsvector,
     created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -447,10 +447,10 @@ def chat_structured(messages: list[dict], schema: dict) -> str:
 # app/embedding.py
 def embed(texts: list[str]) -> list[list[float]]:
     """POST /api/embed {model, input: texts} -> embeddings, one per input, same order.
-    Acquires OLLAMA_LOCK. shape (n, 768). Raises EmbeddingError on failure."""
+    Acquires OLLAMA_LOCK. shape (n, 1024). Raises EmbeddingError on failure."""
 
 EMBED_MODEL: str    # from settings.ollama.embed_model
-EMBED_DIM: int      # from settings (768)
+EMBED_DIM: int      # from settings (1024)
 ```
 
 **Serialization requirement (mandatory, NFR-2):** every Ollama HTTP call executes under `with OLLAMA_LOCK:`. A small-team burst of chat/search requests queues instead of overloading the server; the WebUI shows the busy indicator meanwhile.
@@ -686,7 +686,7 @@ pytest; a test Postgres with pgvector (fixture in `tests/conftest.py`, created i
 - [ ] `test_taxonomy.py`: valid/invalid combos; per-product enumerators; `article_number=None` valid.
 - [ ] `test_hashing.py`: normalization; NUL separator avoids `(a+b,c)`/`(a,b+c)` collisions; same text under different products → same hash; 32-char hex.
 - [ ] `test_ollama.py`: two concurrent calls do not overlap (mock with a sleep; assert serialization via `OLLAMA_LOCK`); `OllamaError` on non-2xx.
-- [ ] `test_embedding.py`: shape `(n, 768)`; `EmbeddingError` on a 500.
+- [ ] `test_embedding.py`: shape `(n, EMBED_DIM)`; `EmbeddingError` on a 500.
 - [ ] `test_records_repo.py`: integration — insert; second insert with same hash → `DuplicateError`; `records_audit` row exists; update writes audit with `{old,new}`; archive/restore cycle.
 - [ ] `test_records_service.py`: valid submit → `RecordOut`; invalid taxonomy → `InvalidTaxonomyError`; duplicate → existing returned/raised consistently.
 - [ ] `test_retrieval_fs.py`: seeded rows; scoped query returns expected rows ranked; empty scope → `[]`; lexical-only fallback when embedding fails.

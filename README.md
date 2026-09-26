@@ -53,7 +53,7 @@ config/
   taxonomy.yaml   Vocabulary (category -> product -> article numbers)
 migrations/       Idempotent schema migrations (0001_init, 0002_stats_role)
 sql/              sql/stats.sql — the external statistics queries
-tests/            pytest suite (103 tests)
+tests/            pytest suite (122 tests)
 ```
 
 ---
@@ -67,14 +67,14 @@ tests/            pytest suite (103 tests)
 
 The models are, by default:
 
-- **embed:** `nomic-embed-text`
-- **LLM:** `qwen2.5:32b-instruct`
+- **embed:** `snowflake-arctic-embed2:568m`
+- **LLM:** `gemma4:e4b`
 
 Pull them into a local Ollama before starting the app:
 
 ```bash
-ollama pull nomic-embed-text
-ollama pull qwen2.5:32b-instruct
+ollama pull snowflake-arctic-embed2:568m
+ollama pull gemma4:e4b
 ```
 
 ---
@@ -147,8 +147,8 @@ Returns `200` with `db` and `ollama` both `"ok"` when PostgreSQL and Ollama are
 reachable:
 
 ```json
-{"status":"ok","db":"ok","ollama":"ok","llm_model":"qwen2.5:32b-instruct",
- "embed_model":"nomic-embed-text"}
+{"status":"ok","db":"ok","ollama":"ok","llm_model":"gemma4:e4b",
+ "embed_model":"snowflake-arctic-embed2:568m"}
 ```
 
 A missing dependency returns `503` with that dependency marked.

@@ -8,8 +8,8 @@
 #
 set -euo pipefail
 
-EMBED_MODEL="${FS_EMBED_MODEL:-nomic-embed-text}"
-LLM_MODEL="${FS_LLM_MODEL:-qwen2.5:32b-instruct}"
+EMBED_MODEL="${FS_EMBED_MODEL:-snowflake-arctic-embed2:568m}"
+LLM_MODEL="${FS_LLM_MODEL:-gemma4:e4b}"
 
 echo "[ollama_init] pulling embedding model '${EMBED_MODEL}'"
 ollama pull "${EMBED_MODEL}"

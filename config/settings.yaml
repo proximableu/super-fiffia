@@ -4,8 +4,8 @@ db:
   pool_max: 5
 ollama:
   base_url: "http://localhost:11434"
-  embed_model: "nomic-embed-text"
-  llm_model: "qwen2.5:32b-instruct"
+  embed_model: "snowflake-arctic-embed2:568m"
+  llm_model: "gemma4:e4b"
 retrieval:
   pool: 30
   top_k_records: 10
