@@ -182,6 +182,16 @@ def create_app() -> FastAPI:
         """Bare root lands on the Submit stage."""
         return RedirectResponse(url="/ingest", status_code=302)
 
+    @app.get("/health")
+    def health() -> JSONResponse:
+        """Liveness probe for the compose healthcheck (CONTRACT.md §12 surface).
+
+        A bare 200 is sufficient: the webui is a server-rendered HTML app and,
+        like the API's ``/api/health``, its dependencies are gate-kept by the
+        compose ``depends_on: service_healthy`` clauses.
+        """
+        return JSONResponse(status_code=200, content={"status": "ok"})
+
     @app.get("/ingest", response_class=HTMLResponse)
     def ingest(request: Request) -> HTMLResponse:
         """Render the Submit form on the shared base layout (§3, §1)."""

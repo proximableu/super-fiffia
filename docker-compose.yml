@@ -1,7 +1,7 @@
 # Full local stack for the F&S knowledge base (NFR-5).
 #
 #   docker compose up            # build + start, wait for healthchecks
-#   curl -s localhost:8000/api/health
+#   curl -s localhost:9000/api/health
 #   docker compose run --rm ollama sh /init/ollama_init.sh   # pre-pull models
 #
 # Bring the app up against already-running host services instead (the venv
@@ -57,6 +57,15 @@ services:
       - FS_OLLAMA_URL=${FS_OLLAMA_URL:-http://192.168.0.14:11434}
     ports:
       - "9000:8000"
+    healthcheck:
+      # ``python`` is guaranteed in the slim image; curl is not. Probe the API's
+      # health route (returns 200 only when both DB and Ollama are reachable).
+      test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:8000/api/health\", timeout=4)'"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
@@ -77,6 +86,13 @@ services:
       - FS_OLLAMA_URL=${FS_OLLAMA_URL:-http://192.168.0.14:11434}
     ports:
       - "9001:8001"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:8001/health\", timeout=4)'"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
