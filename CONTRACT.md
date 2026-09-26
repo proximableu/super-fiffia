@@ -657,7 +657,7 @@ def chat(scope: Scope | None, messages: list[ChatTurn], lang: str) -> ChatRespon
 # app/rag.py
 def chunk(text: str) -> list[tuple[int, str | None, str]]: ...
     # -> [(chunk_index, section_header | None, chunk_text)]
-    # Split by heading/paragraph; target ~2000 chars, small overlap; nearest heading captured.
+    # Split by heading/paragraph; target 8000 chars, 800 overlap; nearest heading captured.
 
 def ingest(source_dir: Path) -> RagIngestResult: ...
     # 1. Walk source_dir for .md/.txt.
