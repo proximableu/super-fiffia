@@ -205,6 +205,7 @@ select:focus, input:focus, textarea:focus {
             failureField: "Kundens felbeskrivning",
             solutionField: "Lösningsbeskrivning",
             duplicate: "Finns redan (id {id}, skapad {created})",
+            confirmAnyway: "Lägg ändå till",
             error: "Något gick fel. Försök igen."
         },
         en: {
@@ -234,6 +235,7 @@ select:focus, input:focus, textarea:focus {
             failureField: "Customer failure description",
             solutionField: "Solution description",
             duplicate: "Already exists (id {id}, created {created})",
+            confirmAnyway: "Add anyway",
             error: "Something went wrong. Please retry."
         }
     };
@@ -246,6 +248,12 @@ select:focus, input:focus, textarea:focus {
     var indicator = document.getElementById("indicator");
     var busy = document.getElementById("submit-busy");
     var submitBtn = document.getElementById("submit-btn");
+
+    // §3.3 (bug A9 follow-up): when the pre-check finds a duplicate the user is
+    // asked to add it anyway; the flag gates whether the submit handler fires.
+    var existingId = null;
+    var existingCreated = null;
+    var addAnyway = false;
 
     // --- helpers -----------------------------------------------------------
 
@@ -407,14 +415,10 @@ select:focus, input:focus, textarea:focus {
         hideBusy();
     }
 
-    form.addEventListener("submit", function (event) {
-        event.preventDefault();
-        if (!clientValidate()) return;
+    // --- submit (§3.2) -----------------------------------------------------
 
-        showProgress();
-        showBusy();
-
-        var body = {
+    function buildBody() {
+        return {
             category: categoryEl.value,
             product: productEl.value,
             article_number: articleEl.value || null,
@@ -423,7 +427,11 @@ select:focus, input:focus, textarea:focus {
             ncr: document.getElementById("ncr").value,
             bug_record_number: document.getElementById("bug_record_number").value
         };
+    }
 
+    function doSubmit(body) {
+        showProgress();
+        showBusy();
         fetch("/api/records", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -443,6 +451,53 @@ select:focus, input:focus, textarea:focus {
             .catch(function () {
                 showError(I18N[LANG].error);
             });
+    }
+
+    // §3.3 (bug A9 follow-up): pre-check for a duplicate before submit so the
+    // user can confirm adding an already-existing record. The webui's
+    // /api/records/check-duplicate route is the same-origin pre-check the
+    // unique index never weakens (the route only reads failure/solution text).
+    function preCheckSubmit() {
+        var body = buildBody();
+        fetch("/api/records/check-duplicate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                failure_description: body.failure_description,
+                solution_description: body.solution_description
+            })
+        })
+            .then(async function (resp) {
+                var data = await resp.json().catch(function () { return {}; });
+                if (data && data.duplicate) {
+                    existingId = data.existing_id;
+                    existingCreated = data.created_at;
+                    showDuplicate(existingId, existingCreated);
+                    submitBtn.textContent = I18N[LANG].confirmAnyway;
+                    addAnyway = true;
+                } else {
+                    doSubmit(body);
+                }
+            })
+            .catch(function () {
+                doSubmit(body);
+            });
+    }
+
+    form.addEventListener("submit", function (event) {
+        event.preventDefault();
+        if (!clientValidate()) return;
+
+        // A previous pre-check flagged a duplicate; the user confirmed "Add
+        // anyway" — commit the body now, clearing the flag.
+        if (addAnyway) {
+            addAnyway = false;
+            submitBtn.textContent = I18N[LANG].submit;
+            doSubmit(buildBody());
+            return;
+        }
+
+        preCheckSubmit();
     });
 
     document.getElementById("clear-btn").addEventListener("click", function () {
