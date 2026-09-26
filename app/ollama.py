@@ -93,6 +93,7 @@ def chat(messages: list[dict]) -> str:
 
     Raises:
         OllamaError: on any failure talking to Ollama.
+        LLMError: if the model returns no usable content string.
     """
     payload = {
         "model": settings.ollama.llm_model,
@@ -100,7 +101,14 @@ def chat(messages: list[dict]) -> str:
         "stream": False,
     }
     body = ollama_post("/api/chat", payload)
-    return body["message"]["content"]
+    content = body.get("message", {}).get("content")
+    if not isinstance(content, str) or not content:
+        logger.error(
+            "Ollama response missing/empty content: %s",
+            content,
+        )
+        raise LLMError("Ollama response had no usable content")
+    return content
 
 
 def chat_structured(messages: list[dict], schema: dict) -> str:
