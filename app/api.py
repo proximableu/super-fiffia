@@ -26,7 +26,7 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Callable, Literal, Optional
 from typing import Awaitable
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import psycopg
 from fastapi import FastAPI, HTTPException, Query
