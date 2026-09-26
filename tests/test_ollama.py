@@ -74,6 +74,18 @@ def test_chat_returns_content(monkeypatch: pytest.MonkeyPatch) -> None:
     assert out == "the answer"
 
 
+def test_chat_returns_empty_content_raises_llm_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Plain ``chat()`` also raises ``LLMError`` on an empty content field (A8 fix).
+
+    ``test_chat_structured_empty_content_raises_llm_error`` covers
+    ``chat_structured()`` only; the A8 fix guards the same "no usable content"
+    branch on the plain ``chat()`` return path.
+    """
+    monkeypatch.setattr(ollama._HTTP, "post", lambda *a, **k: _make_resp(200, {"message": {}}))
+    with pytest.raises(LLMError, match="no usable content"):
+        chat([{"role": "user", "content": "q"}])
+
+
 def test_chat_sends_model_and_stream_false(monkeypatch: pytest.MonkeyPatch) -> None:
     seen: dict = {}
 
