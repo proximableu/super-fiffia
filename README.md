@@ -53,7 +53,7 @@ config/
   taxonomy.yaml   Vocabulary (category -> product -> article numbers)
 migrations/       Idempotent schema migrations (0001_init, 0002_stats_role)
 sql/              sql/stats.sql — the external statistics queries
-tests/            pytest suite (122 tests)
+tests/            pytest suite (133 tests)
 ```
 
 ---
