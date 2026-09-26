@@ -152,6 +152,25 @@ def test_clear_missing_session_is_noop(monkeypatch: pytest.MonkeyPatch) -> None:
     clear_session("never-used")
 
 
+def test_history_trims_to_cap(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A session's history is trimmed to the last MAX_HISTORY_TURNS turns."""
+    monkeypatch.setattr(settings.agent, "max_turns", 5)
+    _script(monkeypatch, _outcome(answer="a"))
+
+    # Each turn adds 2 turns (user + assistant); MAX_HISTORY_TURNS is 20, so 11
+    # turns (22 entries) must be trimmed back to exactly the last 20.
+    for _ in range(11):
+        chat(scope=None, messages=[ChatTurn(role="user", content="q")], lang="en")
+
+    history = chat_mod._history[chat_mod._DEFAULT_SESSION]
+    assert len(history) == chat_mod.MAX_HISTORY_TURNS
+    # The retained window is the tail: the newest user turn is last, and the
+    # oldest turns (first user turn, its assistant reply) have been dropped.
+    assert history[-1].role == "assistant"
+    assert history[-2].role == "user"
+    assert history[-2].content == "q"
+
+
 def test_to_response_maps_fields() -> None:
     """to_response maps an AgentOutcome onto the ChatResponse contract."""
     outcome = _outcome(answer="x", turns_used=4, ended_with="budget_exhausted")

@@ -8,7 +8,7 @@ memory so follow-up turns carry the running context.
 Conversation model (see `CONTRACT.md` §11 / `WEBUI.md` §4):
 
 - Each request arrives with the *new* user turn(s) and a session token (the
-  webui reads it from the request cookies).
+  webui mints it into ``localStorage`` and posts it in the JSON request body).
 - The incoming user turn(s) are appended to that session's history, and the full
   history is handed to :func:`run_agent` so the agent reasons over the running
   conversation.
@@ -16,6 +16,9 @@ Conversation model (see `CONTRACT.md` §11 / `WEBUI.md` §4):
   the next follow-up sees it.
 - :func:`clear_session` drops a session's history (the webui's ``/chat/clear``
   route calls it).
+- :func:`chat` keeps the history lossy: only the last ``MAX_HISTORY_TURNS`` turns
+  of a session are retained; older turns are trimmed on the next turn so a
+  long-lived session cannot grow the in-memory cache without bound.
 
 History lives in a single module-level dict keyed by session token and is only
 ever touched here; the Ollama calls :func:`run_agent` makes stay serialised
@@ -40,8 +43,34 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Per-session in-memory conversation history: ``{session_token: [ChatTurn, ...]}``.
-# Cleared by :func:`clear_session` and lost on process restart.
+# Cleared by :func:`clear_session` and lost on process restart. History is lossy:
+# only the last ``MAX_HISTORY_TURNS`` turns of a session are retained (older turns
+# are dropped, not just the assistant answers) — see :func:`_trim_history`.
 _history: dict[str, list[ChatTurn]] = {}
+
+# Upper bound on the number of turns kept in a session's in-memory history. We
+# keep the most recent ``MAX_HISTORY_TURNS`` turns; anything older is trimmed on
+# the next turn so a long-lived session cannot grow the cache without bound.
+MAX_HISTORY_TURNS = 20
+
+
+def _trim_history(session_token: str, history: list[ChatTurn]) -> None:
+    """Drop the oldest turns of a session so ``history`` keeps the last
+    ``MAX_HISTORY_TURNS`` turns (lossy trim).
+
+    Called after the assistant turn is appended. The agent already sees the full
+    history for the turn it is answering, so trimming here only affects which
+    context the *next* turn carries.
+    """
+    excess = len(history) - MAX_HISTORY_TURNS
+    if excess > 0:
+        del history[:excess]
+        logger.info(
+            "trimmed %d turn(s) from session %r (now %d)",
+            excess,
+            session_token,
+            len(history),
+        )
 
 
 class ChatResponse(BaseModel):
@@ -79,6 +108,7 @@ def chat(
     )
 
     history.append(ChatTurn(role="assistant", content=outcome.answer))
+    _trim_history(session_token, history)
     logger.info(
         "chat turn for session %r: %d turn(s), ended_with=%s",
         session_token,
