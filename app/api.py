@@ -563,10 +563,9 @@ def _register_routes(app: FastAPI) -> None:
         changes (WEBUI.md §2); both ``category`` and ``product`` are required.
         """
         article_numbers = article_numbers_for_product(category, product)
-        article_label = _product_label(category, product)
         return TaxonomyArticlesResult(
             items=[
-                TaxonomyItem(id=art, label_sv=article_label, label_en=article_label)
+                TaxonomyItem(id=art, label_sv=art, label_en=art)
                 for art in article_numbers
             ]
         )
@@ -631,22 +630,6 @@ def _ollama_status() -> str:
 def _now_iso() -> str:
     """Current UTC time as an RFC 3339 timestamp for the health body."""
     return datetime.now(timezone.utc).isoformat()
-
-
-def _product_label(category: str, product: str) -> str:
-    """Return the chosen-language label for ``product`` (WEBUI §3.2).
-
-    The article <select> has no per-article label of its own, so every option in a
-    product's group inherits the product's label; it is neutral when unknown.
-    """
-    match = (
-        item
-        for item in products_for_category(category)
-        if item.id == product
-    )
-    for candidate in match:
-        return candidate.label_en
-    return product
 
 
 # --------------------------------------------------------------------------- #

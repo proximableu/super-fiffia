@@ -321,7 +321,7 @@ def create_app() -> FastAPI:
                     "status": status,
                     "q": q,
                 },
-                "categories": _categories_for_select(taxonomy),
+                "categories": _categories_for_select(taxonomy, _lang_from_request(request)),
             },
         )
 
@@ -346,7 +346,7 @@ def create_app() -> FastAPI:
             {
                 "lang": lang or _lang_from_request(request),
                 "record": record,
-                "categories": _categories_for_select(taxonomy),
+                "categories": _categories_for_select(taxonomy, _lang_from_request(request)),
             },
         )
 
@@ -478,13 +478,12 @@ def create_app() -> FastAPI:
     ) -> TaxonomyArticlesResult:
         """Article numbers for ``product`` (WebUI cascade) — empty if unknown.
 
-        Each option carries the product's chosen-language label (WEBUI §3.2) rather
-        than the raw article number.
+        Each option's label is the raw article number itself (WEBUI §2: the
+        ``article_number`` <select> enumerates the product's ``article_numbers``).
         """
-        label = _product_label(request, category, product)
         return TaxonomyArticlesResult(
             items=[
-                TaxonomyItem(id=art, label_sv=label, label_en=label)
+                TaxonomyItem(id=art, label_sv=art, label_en=art)
                 for art in article_numbers_for_product(category, product)
             ]
         )
@@ -551,14 +550,15 @@ def _lang_from_post(request: Request) -> str:
     return _lang_from_request(request)
 
 
-def _categories_for_select(taxonomy: object) -> list[dict]:
+def _categories_for_select(
+    taxonomy: object, lang: str
+) -> list[dict]:
     """Return the taxonomy categories as ``{id, label}`` (language-selected).
 
     Used to populate the category <select> in both the list filter and the edit
     form. Labels are chosen from the active session language so the dropdowns
     render in the user's language without a client-side i18n table.
     """
-    lang = "sv"
     return [
         {"id": category.id, "label": getattr(category, f"label_{lang}")}
         for category in taxonomy.categories
@@ -605,20 +605,6 @@ def _edit_redirect(record_id: UUID, outcome: str) -> RedirectResponse:
     )
 
 
-def _product_label(
-    request: Request, category: str, product: str
-) -> str:
-    """Return the chosen-language label for ``product`` (WEBUI §3.2).
-
-    The article <select> has no per-article label of its own, so every option in a
-    product's group inherits the product's label — in the request's language. The
-    list is neutral (the product id) when the pair is unknown.
-    """
-    lang = _lang_from_request(request)
-    for candidate in products_for_category(category):
-        if candidate.id == product:
-            return candidate.label_en if lang == "en" else candidate.label_sv
-    return product
 
 
 def _on_validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:

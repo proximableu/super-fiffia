@@ -119,12 +119,12 @@ def test_articles_endpoint_filters_by_category_and_product():
 
 
 def test_articles_labels_are_product_labels_not_raw_values():
-    """Article options carry the product's label, not the raw article number (fix #2).
+    """Article options carry the raw article number as their label (bug #2).
 
-    The article <select> has no per-article label, so every option inherits the
-    product's label in the active language — not the raw ``id``. This is the bug
-    fixed in this session: previously ``label_sv`` / ``label_en`` were set to the
-    raw article-number ``id``.
+    Per WEBUI.md §2 the ``article_number`` <select> is an enumerator of the
+    product's ``article_numbers`` list; each option's label is that article
+    number itself — not the product's label. The render bug fixed in this
+    session previously set ``label_sv`` / ``label_en`` to the product's label.
     """
     client = _client()
     category = client.get("/api/taxonomy/categories").json()["items"][0]["id"]
@@ -143,13 +143,9 @@ def test_articles_labels_are_product_labels_not_raw_values():
     assert articles, "need at least one article number to assert its label"
 
     for art in articles:
-        # The article id is the raw value (used as the <select> value).
-        assert art["id"]
-        # But the label is the product's label, not the raw article number.
-        assert art["label_sv"] == product["label_sv"]
-        assert art["label_en"] == product["label_en"]
-        assert art["label_sv"] != art["id"]
-        assert art["label_en"] != art["id"]
+        # The label is the raw article number (WEBUI.md §2, matching taxonomy.yaml).
+        assert art["label_sv"] == art["id"]
+        assert art["label_en"] == art["id"]
 
 
 def test_articles_label_respects_language():
@@ -164,21 +160,17 @@ def test_articles_label_respects_language():
     product = products[0]
     product_id = product["id"]
 
-    en = client.get(
+    # The article <select> labels are the raw article numbers themselves; the
+    # id equals the label in every language.
+    articles = client.get(
         "/api/taxonomy/articles",
         params={"category": category, "product": product_id},
         cookies={"lang": "en"},
-    ).json()["items"][0]["label_en"]
-    sv = client.get(
-        "/api/taxonomy/articles",
-        params={"category": category, "product": product_id},
-        cookies={"lang": "sv"},
-    ).json()["items"][0]["label_sv"]
-
-    # Both languages must carry the product's label; if the labels differ per
-    # language they must differ between them.
-    assert en == product["label_en"]
-    assert sv == product["label_sv"]
+    ).json()["items"]
+    assert articles, "need at least one article number to assert its label"
+    for art in articles:
+        assert art["label_en"] == art["id"]
+        assert art["label_sv"] == art["id"]
 
 
 # --------------------------------------------------------------------------- #
@@ -506,21 +498,63 @@ def test_check_duplicate_route_returns_true_for_stored(monkeypatch: pytest.Monke
 # Render assertions — new surface rendered by the webui (bug #3.3 follow-up, B9e)
 #
 # No JS harness exists here; these assert the static contract the JS depends on:
-# the delegated list-filter listener the edit page posts to, the server-rendered
+# the list-filter listener the submit page registers on window, the server-rendered
 # LANG init (i18n fix B6), and the edit form's Cancel target. JS behaviour itself
 # is verified by inspection against the rendered markup.
 # --------------------------------------------------------------------------- #
-def test_ingest_page_contains_delegated_list_filter_listener() -> None:
-    """``GET /ingest`` renders the delegated ``list-filter`` listener (bug #3.3).
+def test_ingest_page_contains_list_filter_listener() -> None:
+    """``GET /ingest`` registers the ``list-filter`` listener on ``window`` (bug B3).
 
-    The list partial re-renders after an edit via a ``list-filter`` event the
-    submit page listens for with a delegated ``document.addEventListener``. Its
-    presence in the rendered Submit page is the contract the edit→list re-render
-    relies on.
+    The list partial dispatches a ``list-filter`` CustomEvent on ``window`` from its
+    filter form; the submit page must listen on ``window`` too — ``window`` is the root
+    of the DOM event tree, so a window-dispatched event reaches only window itself and
+    never document (which lies below it). A listener on document (or a
+    capture-phase one) could therefore never fire: it couldn't, because the event is
+    never dispatched on the path document is on.
     """
     resp = _client().get("/ingest")
     assert resp.status_code == 200
-    assert 'document.addEventListener("list-filter"' in resp.text
+    assert 'window.addEventListener("list-filter"' in resp.text
+
+
+def test_ingest_list_endpoint_renders() -> None:
+    """``GET /ingest/list`` renders the bare partial (regression: NameError on lang).
+
+    The route computes the selected-language category label inline in the
+    ``TemplateResponse`` context and must not reference an undefined ``lang``
+    name — a missing one raises ``NameError`` and returns HTTP 500, surfacing in
+    the page as the "Internal server error" that never showed any records.
+    """
+    resp = _client().get("/ingest/list")
+    assert resp.status_code == 200
+    assert "record-list" in resp.text
+
+
+def test_list_partial_kicks_cascade_on_load() -> None:
+    """The /ingest page runs the swapped-in list partial's inline script after
+    swapping it into ``#record-list`` via ``innerHTML``.
+
+    ``element.innerHTML = html`` inserts markup but does **not** execute inline
+    ``<script>`` tags, so the partial's self-contained i18n + taxonomy cascade
+    never initialised on the page — leaving ``#filter-product`` (and the article
+    select beneath it) empty. The fix (``runInjectedScripts`` in submit.html)
+    recreates each injected script via ``createElement`` + ``appendChild`` so it
+    runs. The test asserts the partial is still self-contained (its script is a
+    single IIFE whose cascade call lives inside it) and that submit.html carries
+    the re-execution helper, the contract that makes the initialisation work.
+    """
+    partial = _client().get("/ingest/list")
+    assert partial.status_code == 200
+    # The cascade is defined inside the partial's own IIFE and invoked on load
+    # (defined before the call) — the partial stays self-contained.
+    assert "function onCategoryChange()" in partial.text
+    assert partial.text.index("function onCategoryChange()") < partial.text.index(
+        "onCategoryChange();"
+    )
+    # submit.html re-runs the injected script after the innerHTML swap.
+    submit = _client().get("/ingest")
+    assert submit.status_code == 200
+    assert "runInjectedScripts" in submit.text
 
 
 def test_edit_form_cancel_links_to_ingest(monkeypatch: pytest.MonkeyPatch) -> None:
