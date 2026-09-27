@@ -16,6 +16,21 @@
 {% set status = filters.status or "active" %}
 
 <style>
+.list-toolbar {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 8px; margin: 0 0 12px;
+}
+.list-toggle {
+    background: transparent; border: 1px solid #dfe3ea; color: #5b6675;
+    border-radius: 8px; padding: 8px 12px; font-size: 13px; font-weight: 600;
+    font-family: inherit; cursor: pointer; display: flex;
+    align-items: center; justify-content: space-between; gap: 8px;
+}
+.list-toggle:hover { background: #f5f7fa; }
+.list-toggle .chev { transition: transform 0.15s ease; }
+.list-toggle[aria-expanded="false"] .chev { transform: rotate(-90deg); }
+.list-count { margin: 0; color: var(--muted); font-size: 13px; }
+.list-body.hidden { display: none; }
 .list-filter .filters { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
 .list-filter .filters .field { flex: 1 1 130px; }
 .list-filter .row { flex: 2 1 260px; }
@@ -63,6 +78,7 @@
 .empty { color: #5b6675; font-size: 14px; padding: 24px 0; }
 </style>
 
+<div class="list-body">
 {% if count %}
 <p class="list-count" data-i18n-resultcount data-count="{{ count }}">{{ count }} resultat</p>
 {% endif %}
@@ -153,6 +169,15 @@
 {% else %}
 <p class="empty" data-i18n="noResults">Inga poster.</p>
 {% endif %}
+</div>
+
+<div class="list-toolbar">
+    <button type="button" id="list-toggle" class="list-toggle"
+            aria-expanded="true" aria-controls="list-body" data-i18n-label="collapseList">
+        <span class="chev">▾</span>
+        <span data-i18n="collapse">Sammanfäll</span>
+    </button>
+</div>
 
 <script>
 (function () {
@@ -173,7 +198,9 @@
             solution: "Lösning:",
             edit: "Redigera",
             archive: "Arkivera",
-            restore: "Återställ"
+            restore: "Återställ",
+            collapse: "Sammanfäll",
+            expand: "Visa"
         },
         en: {
             category: "Category",
@@ -187,7 +214,9 @@
             solution: "Solution:",
             edit: "Edit",
             archive: "Archive",
-            restore: "Restore"
+            restore: "Restore",
+            collapse: "Collapse",
+            expand: "Expand"
         }
     };
 
@@ -287,6 +316,29 @@
     }
     if (categoryEl) categoryEl.addEventListener("change", onCategoryChange);
     if (productEl) productEl.addEventListener("change", onProductChange);
+
+    // Kick the category → product → article cascade once on load: the
+    // category filter is populated server-side (never empty), so it never
+    // fires a "change" event on its own. Without this the product select
+    // stays empty until the user picks something.
+    onCategoryChange();
+
+    // --- collapsible toolbar ----------------------------------------------
+    var listToggle = document.getElementById("list-toggle");
+    if (listToggle) {
+        listToggle.addEventListener("click", function () {
+            var label = listToggle.querySelector("[data-i18n]");
+            listToggle.setAttribute("aria-expanded",
+                listToggle.getAttribute("aria-expanded") === "true" ? "false" : "true");
+            // The label describes what the *next* click would do, i.e. the
+            // opposite of the pre-click state: after collapsing the list,
+            // the button should offer to expand.
+            var collapsed = label ? label.getAttribute("data-i18n") : "collapse";
+            var key = collapsed ? "expand" : "collapse";
+            listToggle.setAttribute("data-i18n", key);
+            if (label) label.textContent = I18N[LANG][key];
+        });
+    }
 
     applyI18n();
 })();

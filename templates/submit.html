@@ -63,6 +63,15 @@ select:focus, input:focus, textarea:focus {
 .optional-toggle[aria-expanded="false"] .chev { transform: rotate(-90deg); }
 .optional-body { padding: 4px 20px 16px; }
 .optional-body.hidden { display: none; }
+.list-toggle {
+    width: 100%; background: transparent; border: none; color: var(--muted);
+    padding: 10px 4px; text-align: left; font-size: 13px; cursor: pointer;
+    display: flex; align-items: center; justify-content: space-between;
+    font-weight: 600;
+}
+.list-toggle .chev { transition: transform 0.15s ease; }
+.list-toggle[aria-expanded="false"] .chev { transform: rotate(-90deg); }
+.list-body.hidden { display: none; }
 .actions { display: flex; gap: 12px; align-items: center; margin-top: 8px; }
 .indicator {
     min-height: 22px; font-size: 14px; margin-top: 14px; padding: 0;
@@ -158,8 +167,12 @@ select:focus, input:focus, textarea:focus {
     <!-- Record list (§3.5): the partial (filters + cards) lives behind the
          #record-list element; fetched from /ingest/list and swapped in. -->
     <div class="panel list-section">
-        <h2 data-i18n="listHeading">Poster</h2>
-        <div id="record-list" class="record-list">
+        <button type="button" class="list-toggle"
+                aria-expanded="false" aria-controls="record-list">
+            <span data-i18n="listHeading">Poster</span>
+            <span class="chev">▼</span>
+        </button>
+        <div id="record-list" class="record-list list-body hidden">
             <!-- partial injected here -->
         </div>
     </div>
@@ -188,6 +201,7 @@ select:focus, input:focus, textarea:focus {
             ncr: "NCR",
             bugRecordNumber: "Ägarnr",
             optionalHeading: "Valfrihetsfält",
+            listHeading: "Poster",
             categoryPlaceholder: "—— Välj kategori",
             productPlaceholder: "—— Välj produkt",
             articlePlaceholder: "—— Välj artikel",
@@ -218,6 +232,7 @@ select:focus, input:focus, textarea:focus {
             ncr: "NCR",
             bugRecordNumber: "Bug record number",
             optionalHeading: "Optional fields",
+            listHeading: "Records",
             categoryPlaceholder: "—— Select category",
             productPlaceholder: "—— Select product",
             articlePlaceholder: "—— Select article",
@@ -273,7 +288,8 @@ select:focus, input:focus, textarea:focus {
         var keys = [
             "requiredHeading", "category", "product",
             "failure", "solution", "articleNumber", "ncr", "bugRecordNumber",
-            "optionalHeading"
+            "optionalHeading",
+            "listHeading"
         ];
         keys.forEach(setLabel);
         setPlaceholder("category", "categoryPlaceholder");
@@ -518,6 +534,12 @@ select:focus, input:focus, textarea:focus {
         document.getElementById("optional-body").classList.toggle("hidden", expanded);
     });
 
+    document.querySelector(".list-toggle").addEventListener("click", function () {
+        var expanded = this.getAttribute("aria-expanded") === "true";
+        this.setAttribute("aria-expanded", String(!expanded));
+        document.getElementById("record-list").classList.toggle("hidden", expanded);
+    });
+
     // --- wiring ------------------------------------------------------------
 
     categoryEl.addEventListener("change", onCategoryChange);
@@ -560,8 +582,24 @@ select:focus, input:focus, textarea:focus {
         set("q", qEl ? qEl.value : "");
         fetch("/ingest/list?" + params.toString())
             .then(function (r) { return r.text(); })
-            .then(function (html) { list.innerHTML = html; })
+            .then(function (html) {
+                list.innerHTML = html;
+                runInjectedScripts(list);
+            })
             .catch(function () { /* leave the panel empty on failure */ });
+    }
+
+    // Re-execute inline <script> tags inside a container after its markup was
+    // injected via innerHTML (scripts set through innerHTML do not run). This
+    // is how the record-list partial runs its own i18n + taxonomy cascade,
+    // which otherwise never initialises on the /ingest page.
+    function runInjectedScripts(container) {
+        var scripts = container.querySelectorAll("script");
+        for (var i = 0; i < scripts.length; i++) {
+            var node = document.createElement("script");
+            node.textContent = scripts[i].textContent;
+            document.body.appendChild(node);
+        }
     }
 
     // --- init --------------------------------------------------------------
@@ -580,13 +618,14 @@ select:focus, input:focus, textarea:focus {
     // --- record-list filter (§3.5, bug B3) ---------------------------------
     // The swapped-in partial (records_list.html) dispatches a "list-filter"
     // CustomEvent on window from its filter form's submit handler; it carries
-    // the same field names loadList() reads. The owning page must re-fetch
-    // /ingest/list and swap the partial back. A capture-phase listener on
-    // document receives the event dispatched on window (capture phase reaches
-    // document on the way down to the target), so no bubbling is required.
-    document.addEventListener("list-filter", function () {
+    // the same field names loadList() reads. The owning page re-fetches
+    // /ingest/list and swaps the partial back. Both dispatch and listen on
+    // window: window is the root of the DOM event tree, so a window-dispatched
+    // event reaches only window itself (document lies below window and never
+    // does). A listener on document could therefore never fire — that was bug B3.
+    window.addEventListener("list-filter", function () {
         loadList();
-    }, true);
+    });
 })();
 </script>
 {% endblock %}
