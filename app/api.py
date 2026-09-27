@@ -214,11 +214,18 @@ class RagIngestRequest(BaseModel):
     omitted the default document directory (``rag_source``) is used. The
     optional ``chunk_chars`` / ``overlap`` override the chunking size in
     characters (see :func:`app.rag.chunk` / :func:`app.rag.ingest`).
+
+    The optional ``category`` / ``product`` tag every chunk from this ingest with
+    the current taxonomy so retrieval (see
+    :func:`app.retrieval.retrieve_rag`) can filter RAG candidates to those
+    relevant to the product being discussed. Omit for an unscoped ingest.
     """
 
     source_dir: str = ""
     chunk_chars: int = 8000
     overlap: int = 800
+    category: str | None = None
+    product: str | None = None
 
 
 class ChatRequest(BaseModel):
@@ -469,7 +476,10 @@ def _register_routes(app: FastAPI) -> None:
             scope = body.scope or Scope()
             hits.extend(retrieve_fs(scope, body.q, body.top_k))
         if body.source in ("rag", "both"):
-            hits.extend(retrieve_rag(body.q, body.top_k))
+            # Same ``scope`` filters both legs: a missing scope is the empty
+            # filter (category/product/article_number all None).
+            scope = body.scope or Scope()
+            hits.extend(retrieve_rag(body.q, body.top_k, scope=scope))
         hits.sort(key=lambda h: h.score, reverse=True)
         return SearchResponse(results=hits, count=len(hits))
 
@@ -497,7 +507,13 @@ def _register_routes(app: FastAPI) -> None:
         default ``rag_source``) into ``rag_chunks``; returns ``{files, chunks,
         embedded, upserted}``. Idempotent by ``(source_file, content_hash)``."""
         source_dir = body.source_dir or "rag_source"
-        result = ingest(source_dir, chunk_chars=body.chunk_chars, overlap=body.overlap)
+        result = ingest(
+            source_dir,
+            chunk_chars=body.chunk_chars,
+            overlap=body.overlap,
+            category=body.category,
+            product=body.product,
+        )
         return RagIngestResponse(
             files=result.files,
             chunks=result.chunks,

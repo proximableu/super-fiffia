@@ -251,19 +251,20 @@ def _dispatch(
     query = action.query or ""
     if rag_only:
         # Operator forced documentation: RAG only, records are never searched.
-        return retrieve_rag(query)
+        # Scope RAG to the current product so unrelated docs are excluded.
+        return retrieve_rag(query, scope=scope)
     if rag_first:
         # Operator tagged this turn: query RAG first and fill in records only
         # when RAG returns nothing — the records leg is the fallback here, not a
         # separate search the model has to trigger.
-        hits = retrieve_rag(query)
+        hits = retrieve_rag(query, scope=scope)
         if hits:
             return hits
         return retrieve_fs(action.filters or scope, query)
     elif action.action == "search_records":
         hits = retrieve_fs(action.filters or scope, query)
     else:  # pragma: no cover - only search_rag reaches here
-        hits = retrieve_rag(query)
+        hits = retrieve_rag(query, scope=scope)
 
     logger.info(
         "agent turn %d: action=%s query=%r filters=%s hits=%d",

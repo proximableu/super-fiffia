@@ -29,6 +29,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--dry-run", action="store_true", help="Count work without writing or embedding."
     )
+    parser.add_argument(
+        "--category",
+        default=None,
+        help="Optional taxonomy category to tag chunks with (rag_chunks.category).",
+    )
+    parser.add_argument(
+        "--product",
+        default=None,
+        help="Optional product to tag chunks with (rag_chunks.product).",
+    )
     return parser.parse_args(argv)
 
 
@@ -49,6 +59,8 @@ def main(argv: list[str] | None = None) -> int:
         chunk_chars=args.chunk_chars,
         overlap=args.overlap,
         dry_run=args.dry_run,
+        category=args.category,
+        product=args.product,
     )
     print(
         f"files={result.files} chunks={result.chunks} "

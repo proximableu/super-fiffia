@@ -209,23 +209,31 @@ def _existing_hashes(
 
 
 def _upsert_batch(
-    conn: psycopg.Connection, rows: Iterable[tuple[str, int, str | None, str, str, str]]
+    conn: psycopg.Connection,
+    rows: Iterable[tuple[str, int, str | None, str, str, str, str | None, str | None]],
 ) -> int:
-    """Upsert a batch of chunks; return the number of rows written."""
+    """Upsert a batch of chunks; return the number of rows written.
+
+    Each row is ``(source_file, index, header, body, digest, embedding,
+    category, product)``; ``category``/``product`` populate the new rag_chunks
+    scope columns (nullable for an unscoped ingest).
+    """
     rows = list(rows)
     if not rows:
         return 0
     query = """
         INSERT INTO rag_chunks (
             source_file, chunk_index, section_header, chunk_text,
-            content_hash, embedding
+            content_hash, embedding, category, product
         )
-        VALUES (%s, %s, %s, %s, %s, %s::vector)
+        VALUES (%s, %s, %s, %s, %s, %s::vector, %s, %s)
         ON CONFLICT (source_file, content_hash) DO UPDATE
         SET chunk_index = EXCLUDED.chunk_index,
             section_header = EXCLUDED.section_header,
             chunk_text = EXCLUDED.chunk_text,
-            embedding = EXCLUDED.embedding
+            embedding = EXCLUDED.embedding,
+            category = EXCLUDED.category,
+            product = EXCLUDED.product
     """
     try:
         with conn.cursor() as cur:
@@ -242,6 +250,8 @@ def ingest(
     *,
     chunk_chars: int = 8000,
     overlap: int = 800,
+    category: str | None = None,
+    product: str | None = None,
     dry_run: bool = False,
 ) -> RagIngestResult:
     """Chunk and embed every document under ``source_dir`` into ``rag_chunks``.
@@ -251,10 +261,17 @@ def ingest(
     ``ON CONFLICT DO UPDATE`` so re-ingesting an existing chunk updates it in
     place without duplicating it.
 
+    The optional ``category``/``product`` populate the new rag_chunks scope
+    columns so retrieval (see :func:`app.retrieval.retrieve_rag`) can filter RAG
+    candidates to those tagged for the product being discussed. An unscoped
+    ingest leaves the columns NULL, which retrieval treats as "matches anything".
+
     Args:
         source_dir: path to the directory of markdown/text documents.
         chunk_chars: target chunk size (characters) passed to :func:`chunk`.
         overlap: overlap (characters) between chunks passed to :func:`chunk`.
+        category: optional product category to tag every chunk from this ingest.
+        product: optional product name to tag every chunk from this ingest.
         dry_run: when true, count the work without writing or embedding.
 
     Returns:
@@ -310,12 +327,21 @@ def ingest(
             upserted=0,
         )
 
-    rows: list[tuple[str, int, str | None, str, str, str]] = []
+    rows: list[tuple[str, int, str | None, str, str, str, str | None, str | None]] = []
     for rel, index, header, body, digest in planned:
         if (rel, digest) in existing:
             continue
         rows.append(
-            (rel, index, header, body, digest, _as_vector(embeddings[embedding_index[digest]]))
+            (
+                rel,
+                index,
+                header,
+                body,
+                digest,
+                _as_vector(embeddings[embedding_index[digest]]),
+                category,
+                product,
+            )
         )
 
     conn = _checkout()
