@@ -450,7 +450,7 @@ def embed(texts: list[str]) -> list[list[float]]:
     Acquires OLLAMA_LOCK. shape (n, 1024). Raises EmbeddingError on failure."""
 
 EMBED_MODEL: str    # from settings.ollama.embed_model
-EMBED_DIM: int      # from settings (1024)
+EMBED_DIM: int = 1024   # module constant (embedding.py): the embed model's fixed output width
 ```
 
 **Serialization requirement (mandatory, NFR-2):** every Ollama HTTP call executes under `with OLLAMA_LOCK:`. A small-team burst of chat/search requests queues instead of overloading the server; the WebUI shows the busy indicator meanwhile.
@@ -585,7 +585,7 @@ A duplicate error additionally carries `"existing_id": "<uuid>"` and `"created_a
 | `GET` | `/api/taxonomy/products?category=<id>` | `200 {"items": [{"id": "pump_a", "label_sv": "Pump A", "label_en": "Pump A"}]}`. Unknown category → `404`. |
 | `GET` | `/api/taxonomy/articles?category=<id>&product=<id>` | `200 {"items": ["100-001", "100-002"]}`. Unknown pair → `404`. |
 
-**Submission paths (locked):** the WebUI submit and the REST API both call `records_service.submit` — one identical pipeline: validate → hash → embed → insert. API-created records default `source="api"` (override per `RecordIn.source`); the external script resolves `article_number → category+product` itself before posting.
+**Submission paths (locked):** the WebUI submit and the REST API both call `records_service.submit` — one identical pipeline: validate → hash → embed → insert. API-created records force `source="api"`, the WebUI force `source="manual"` (a client cannot override); the external script resolves `article_number → category+product` itself before posting.
 
 ---
 
@@ -629,21 +629,25 @@ def chat(scope: Scope | None, messages: list[ChatTurn], lang: str) -> ChatRespon
 | Route | Method | Behaviour |
 |---|---|---|
 | `/` | GET | Redirect to `/ingest`. |
-| `/ingest` | GET | Submit form (new) + record list. Cascade selects from `config/taxonomy.yaml` (labels in active lang). |
-| `/ingest` | POST | Server-side form fallback → `records_service.submit` → re-render (HTMX swap). |
+| `/` | GET | Bare root lands on `/ingest`. |
+| `/health` | GET | `200 {"status":"ok"}` — compose healthcheck (webui is a server-rendered HTML app). |
+| `/ingest` | GET | Submit form (new) + record list. Cascade selects from `config/taxonomy.yaml` (labels in active lang). `LANG` initialised from the server-rendered `{{ lang }}` so a `POST /lang` re-render takes effect (see i18n §12). |
 | `/ingest/list` | GET | HTMX partial: filtered list (`category`, `product`, `article_number`, `q`, `status`). |
 | `/ingest/{id}/edit` | GET/POST | Edit form / save (calls `records_service.update_record`). |
 | `/ingest/{id}/archive` | POST | Archive (soft delete) → re-render list. |
+| `/ingest/{id}/restore` | POST | Restore (soft undo) → re-render list. `404` when the record is missing. |
+| `/api/records` | POST | Submit a record via `records_service.submit`, forcing `source="manual"` (a :9001 human entry point can't masquerade as an import/API; the API's `ApiRecordIn` forces `source="api"`). `201` → `RecordOut`. Duplicate → `409` (+ `existing_id`/`created_at`). Invalid taxonomy → `422`. |
+| `/api/records/check-duplicate` | POST | Pre-submission dedup (the `warn` UX): body `{failure_description, solution_description}`, `200 {"duplicate": true, "existing_id": "...", "created_at": "..."}` or `{"duplicate": false}`. The unique index is never weakened by the pre-check. |
 | `/chat` | GET | Render scope header (cascade + failure description) + conversation (in-memory) + busy indicator. |
-| `/chat` | POST | Blocking: `chat.chat(...)` → swap in answer + sources. `hx-indicator="#chat-busy"`. |
+| `/chat` | POST | Blocking: `chat.chat(...)` → `{answer, sources, turns_used}`. A missing `session_token` raises `RequestValidationError`, mapped to `422 {"error":{"code":"validation","message":"..."}}` (the §10 envelope), not FastAPI's default `{"detail": [...]}`. |
 | `/chat/clear` | POST | Reset in-memory history. |
-| `/lang` | POST | Set session language (`sv`/`en`), full re-render. |
+| `/lang` | POST | Set session language (`sv`/`en` via body or cookie), `303` full re-render of the current page. |
 
 **Busy indicator (mandatory):** `<div id="chat-busy" class="htmx-indicator">…spinner + "Agenten tänker… / Agent is thinking…"</div>`; shown for the full request duration (no streaming). Same pattern for the submit form (`#submit-busy`).
 
 **Cascade:** changing `category` → `hx-get /api/taxonomy/products?category=<id>` swaps the `product` select (reset to `——`); changing `product` → `hx-get /api/taxonomy/articles?...` swaps the `article_number` select; changing `category` also resets `article_number`. Full interaction detail: `WEBUI.md`.
 
-**In-memory history:** `dict[session_token, list[ChatTurn]]`; session token from a cookie. Single user. Cleared by `/chat/clear` and on process restart.
+**In-memory history:** `dict[session_token, list[ChatTurn]]`; the client mints the token into `localStorage` (and reuses the same one for `/chat/clear`) — there is no cookie. Single user. Cleared by `/chat/clear` and on process restart.
 
 ---
 
@@ -653,7 +657,7 @@ def chat(scope: Scope | None, messages: list[ChatTurn], lang: str) -> ChatRespon
 # app/rag.py
 def chunk(text: str) -> list[tuple[int, str | None, str]]: ...
     # -> [(chunk_index, section_header | None, chunk_text)]
-    # Split by heading/paragraph; target ~2000 chars, small overlap; nearest heading captured.
+    # Split by heading/paragraph; target 8000 chars, 800 overlap; nearest heading captured.
 
 def ingest(source_dir: Path) -> RagIngestResult: ...
     # 1. Walk source_dir for .md/.txt.

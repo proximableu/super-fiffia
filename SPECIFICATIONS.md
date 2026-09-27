@@ -237,7 +237,7 @@ app/agent.py    — chat_structured(messages, schema)    # /api/chat with format
 `app/rag.py` (library) + `scripts/ingest_rag.py` (CLI) + `POST /api/rag/ingest` (API trigger). Idempotent:
 
 1. Walk the source directory for `.md` / `.txt`.
-2. Split into chunks by heading/paragraph; target ~2000 chars with small overlap; capture the nearest heading as `section_header`.
+2. Split into chunks by heading/paragraph; target 8000 chars with an 800-char overlap; capture the nearest heading as `section_header`.
 3. Prepend context (`source_file` + `section_header`) for embedding quality.
 4. `embed()` each new chunk (1024-dim) — batched, under the Ollama lock.
 5. **Upsert** into `rag_chunks` keyed by `(source_file, content_hash)`; chunks already stored are not re-embedded. Re-running is safe.

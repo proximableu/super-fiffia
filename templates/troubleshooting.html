@@ -279,7 +279,8 @@
             }
         };
 
-        var LANG = "sv";
+        var LANG = "{{ lang }}";
+        if (LANG !== "en") LANG = "sv";
         var SESSION_KEY = "fs_chat_session";
 
         // The context header scopes retrieval; the failure description is the first
@@ -493,9 +494,9 @@
             }
             if (missing.length) {
                 showError(I18N[LANG].missing.replace("{fields}", missing.join(", ")));
-                return null;
+                return false;
             }
-            return null;
+            return true;
         }
 
         function firstQuery() {
@@ -524,8 +525,7 @@
         }
 
         function send() {
-            var validation = clientValidate();
-            if (validation) return;
+            if (!clientValidate()) return;
 
             var content = firstQuery();
             if (!content) {

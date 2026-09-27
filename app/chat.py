@@ -35,6 +35,7 @@ from pydantic import BaseModel
 from app.config import settings
 from app.agent import run_agent
 from app.records_repo import ChatTurn, Hit, Scope
+from app.rag_routing import resolve_rag_first, resolve_records_first
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -101,10 +102,31 @@ def chat(
     assistant answer is appended back so follow-up turns see the full exchange.
     """
     history = _history.setdefault(session_token, [])
+    is_first_turn = len(history) == 0
     history.extend(messages)
 
+    # Retrieval routing (highest-precedence marker wins):
+    #   #fails tag   -> records first (both flags off — force the fs fallback)
+    #   #docs tag    -> rag_only     (query RAG, never touch stored records)
+    #   follow-up    -> rag_first    (query RAG, fall back to stored records)
+    #   first Q1     -> records      (records-first; unchanged default)
+    latest = messages[-1].content if messages else ""
+    fails_tagged = resolve_records_first(latest)
+    docs_tagged = resolve_rag_first(latest)
+    if fails_tagged:
+        rag_first, rag_only = False, False
+    elif docs_tagged:
+        rag_first, rag_only = False, True
+    else:
+        rag_first, rag_only = not is_first_turn, False
+
     outcome = run_agent(
-        scope, list(history), lang, budget=settings.agent.max_turns
+        scope,
+        list(history),
+        lang,
+        budget=settings.agent.max_turns,
+        rag_first=rag_first,
+        rag_only=rag_only,
     )
 
     history.append(ChatTurn(role="assistant", content=outcome.answer))

@@ -73,13 +73,14 @@ logger = logging.getLogger(__name__)
 # Request / response models (CONTRACT.md §10)
 # --------------------------------------------------------------------------- #
 class ApiRecordIn(RecordIn):
-    """A :class:`RecordIn` that defaults ``source`` to ``"api"``.
+    """A :class:`RecordIn` that forces ``source`` to ``"api"``.
 
-    External (REST) submits are automated, so a record created through the API
-    is tagged ``source='api'`` unless the caller overrides it explicitly
-    (CONTRACT.md §10). ``article_number`` remains optional; an explicit value
-    must still belong to the product's list — :func:`records_service.submit`
-    raises :exc:`InvalidTaxonomyError` otherwise.
+    External (REST) submits are automated, so a record created through the API is
+    tagged ``source='api'`` — the body's ``source`` field is stripped before the
+    re-wrap (see :func:`create_record`), so a client cannot masquerade it as an
+    ``import``/``manual`` submit. ``article_number`` remains optional; an
+    explicit value must still belong to the product's list —
+    :func:`records_service.submit` raises :exc:`InvalidTaxonomyError` otherwise.
     """
 
     source: Source = "api"
@@ -210,10 +211,14 @@ class RagIngestRequest(BaseModel):
     """Body of ``POST /api/rag/ingest``.
 
     An optional ``source_dir`` overrides where to read documents from; when
-    omitted the default document directory (``rag_source``) is used.
+    omitted the default document directory (``rag_source``) is used. The
+    optional ``chunk_chars`` / ``overlap`` override the chunking size in
+    characters (see :func:`app.rag.chunk` / :func:`app.rag.ingest`).
     """
 
     source_dir: str = ""
+    chunk_chars: int = 8000
+    overlap: int = 800
 
 
 class ChatRequest(BaseModel):
@@ -492,7 +497,7 @@ def _register_routes(app: FastAPI) -> None:
         default ``rag_source``) into ``rag_chunks``; returns ``{files, chunks,
         embedded, upserted}``. Idempotent by ``(source_file, content_hash)``."""
         source_dir = body.source_dir or "rag_source"
-        result = ingest(source_dir)
+        result = ingest(source_dir, chunk_chars=body.chunk_chars, overlap=body.overlap)
         return RagIngestResponse(
             files=result.files,
             chunks=result.chunks,

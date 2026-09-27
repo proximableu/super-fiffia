@@ -30,6 +30,12 @@ def _client() -> TestClient:
     return TestClient(create_app())
 
 
+# A 1024-dimensional fake embedding so submit runs with no live Ollama and still
+# fits the ``embedding vector(1024)`` column (mirrors tests/test_api.py).
+def _fake_embed(texts):
+    return [[0.1] * 1024 for _ in texts]
+
+
 # --------------------------------------------------------------------------- #
 # Route contract — CONTRACT.md §12
 # --------------------------------------------------------------------------- #
@@ -231,7 +237,8 @@ def test_chat_route_calls_agent_and_returns_contract(monkeypatch: pytest.MonkeyP
         ended_with="final_answer",
     )
     monkeypatch.setattr(
-        "app.chat.run_agent", lambda scope, messages, lang, budget: outcome
+        "app.chat.run_agent",
+        lambda scope, messages, lang, budget, **_: outcome,
     )
 
     scope = Scope(category="network")
@@ -260,7 +267,7 @@ def test_chat_route_folds_turn_into_history(monkeypatch: pytest.MonkeyPatch) -> 
 
     seen: dict[str, int] = {}
 
-    def _run_agent(scope, messages, lang, budget):
+    def _run_agent(scope, messages, lang, budget, **_):
         seen["count"] = len(messages)
         return AgentOutcome(answer="ok", sources=[], turns_used=1, ended_with="final_answer")
 
@@ -282,13 +289,15 @@ def test_chat_route_folds_turn_into_history(monkeypatch: pytest.MonkeyPatch) -> 
 
 
 def test_chat_route_error_returns_error_contract(monkeypatch: pytest.MonkeyPatch) -> None:
-    """``POST /chat`` maps an agent failure to ``{error: {message}}`` (200).
+    """``POST /chat`` maps an agent failure to the CONTRACT §10 envelope over a non-2xx.
 
-    The Troubleshooting JS reads ``data.error.message``, so a raised agent error
-    must come back as that shape with a 200 status, not a 500.
+    The Troubleshooting JS only reads ``data.error.message`` for non-2xx responses
+    (a 200 is treated as a successful answer), so agent failures must come back as a
+    500 with the ``{"error": {"code": "internal", "message": ...}}`` shape, not a 200.
+    See bug_report_2.md B2.
     """
 
-    def _raise(scope, messages, lang, budget):
+    def _raise(scope, messages, lang, budget, **_):
         raise RuntimeError("llm exploded")
 
     monkeypatch.setattr("app.chat.run_agent", _raise)
@@ -297,7 +306,8 @@ def test_chat_route_error_returns_error_contract(monkeypatch: pytest.MonkeyPatch
         "/chat",
         json={"scope": {}, "messages": [], "lang": "en", "session_token": "sess-err"},
     )
-    assert resp.status_code == 200
+    assert resp.status_code == 500
+    assert resp.json()["error"]["code"] == "internal"
     assert resp.json()["error"]["message"] == "llm exploded"
 
 
@@ -322,3 +332,235 @@ def test_clear_missing_session_is_noop() -> None:
     resp = _client().post("/chat/clear", json={"session_token": "never-existed"})
     assert resp.status_code == 200
     assert resp.json() == {"cleared": True}
+
+
+# --------------------------------------------------------------------------- #
+# webui record submission — provenance + pre-check (bug #3.3 follow-ups)
+# --------------------------------------------------------------------------- #
+
+
+def test_create_record_forces_source_manual(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``POST /api/records`` forces ``source='manual'`` regardless of the body.
+
+    A :9001 client could set ``source='api'`` in the JSON body; the route strips
+    it and forces ``'manual'`` so a human entry point can never masquerade as an
+    automated/import submission. Assert the stored ``source`` in the response.
+    """
+    from app import records_service
+
+    monkeypatch.setattr(records_service, "embed", _fake_embed)
+
+    resp = _client().post(
+        "/api/records",
+        json={
+            "category": "hydraulics",
+            "product": "valve_b",
+            "failure_description": "F",
+            "solution_description": "S",
+            "source": "api",  # a hostile client tries to inject this
+        },
+    )
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["source"] == "manual"
+
+
+def test_check_duplicate_route_absent(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``POST /api/records/check-duplicate`` reports ``duplicate=False`` for new text.
+
+    Exercises the real ``check_duplicate`` service against the truncated test DB
+    — no new record exists yet, so the pre-check returns False.
+    """
+    from app import records_service
+
+    monkeypatch.setattr(
+        records_service,
+        "embed",
+        _fake_embed,  # type: ignore[assignment]
+    )
+    resp = _client().post(
+        "/api/records/check-duplicate",
+        json={"failure_description": "never-stored", "solution_description": "S"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["duplicate"] is False
+
+
+def test_validation_error_returns_envelope(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A malformed body gets the CONTRACT §10 ``validation`` envelope, not FastAPI's ``{"detail": ...}``.
+
+    ``POST /chat`` requires ``session_token``; an empty/invalid body raises
+    ``RequestValidationError``. Before B8 that fell through to FastAPI's default
+    ``422 {"detail": [...]}``; the webui app now maps it to
+    ``422 {"error": {"code": "validation", "message": ...}}``. See bug_report_2.md B8.
+    """
+    resp = _client().post("/chat", json={"scope": {}, "messages": [], "lang": "en"})
+    assert resp.status_code == 422
+    body = resp.json()
+    assert "error" in body and body["error"]["code"] == "validation"
+    # Not FastAPI's default envelope.
+    assert "detail" not in body
+
+
+# --------------------------------------------------------------------------- #
+# webui record submission — round-trip + duplicate contract (bug #3.3, B9)
+# --------------------------------------------------------------------------- #
+def test_create_record_roundtrip_stores_with_manual_source(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``POST /api/records`` stores a row and echoes it with ``source='manual'``.
+
+    The submit route forces ``source='manual'`` (a :9001 human entry point can
+    never masquerade as an automated submission). Assert the stored fields land in
+    the response so the round-trip is covered end-to-end.
+    """
+    from app import records_service
+
+    monkeypatch.setattr(records_service, "embed", _fake_embed)  # type: ignore[assignment]
+
+    resp = _client().post(
+        "/api/records",
+        json={
+            "category": "hydraulics",
+            "product": "valve_b",
+            "failure_description": "F",
+            "solution_description": "S",
+        },
+    )
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["category"] == "hydraulics"
+    assert body["status"] == "active"
+    assert body["source"] == "manual"
+    assert body["id"]  # an id is assigned and echoed
+
+
+def test_create_record_duplicate_returns_409_envelope(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Re-submitting an identical pair returns a CONTRACT §10 ``409 duplicate`` body.
+
+    Covers the webui's own submission duplicate path — the existing
+    ``test_check_duplicate_route_absent`` only asserts the ``False`` pre-check. Here
+    a real row exists in the truncated test DB and a second identical submit must
+    be reported as ``409 {error: {code: duplicate, existing_id, ...}}``. See
+    bug_report_2.md B9.
+    """
+    from app import records_service
+
+    monkeypatch.setattr(records_service, "embed", _fake_embed)  # type: ignore[assignment]
+
+    client = _client()
+    client.post(
+        "/api/records",
+        json={
+            "category": "hydraulics",
+            "product": "valve_b",
+            "failure_description": "F",
+            "solution_description": "S",
+        },
+    )
+    dup = client.post(
+        "/api/records",
+        json={
+            "category": "hydraulics",
+            "product": "valve_b",
+            "failure_description": "F",
+            "solution_description": "S",
+        },
+    )
+    assert dup.status_code == 409, dup.text
+    error = dup.json()["error"]
+    assert error["code"] == "duplicate"
+    # The submit JS points at the existing record via this id.
+    assert error["existing_id"]
+
+
+def test_check_duplicate_route_returns_true_for_stored(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``POST /api/records/check-duplicate`` returns ``duplicate=True`` once a matching row exists.
+
+    The existing suite covers only the ``False`` (pre-submission, no row yet) path.
+    Insert a row, then re-run the pre-check against the same text and assert the
+    positive result carries the existing id — the ``warn`` UX branches on this.
+    """
+    from app import records_service
+
+    monkeypatch.setattr(records_service, "embed", _fake_embed)  # type: ignore[assignment]
+
+    client = _client()
+    client.post(
+        "/api/records",
+        json={
+            "category": "hydraulics",
+            "product": "valve_b",
+            "failure_description": "F",
+            "solution_description": "S",
+        },
+    )
+    resp = client.post(
+        "/api/records/check-duplicate",
+        json={"failure_description": "F", "solution_description": "S"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["duplicate"] is True
+    assert body["existing_id"]
+
+
+# --------------------------------------------------------------------------- #
+# Render assertions — new surface rendered by the webui (bug #3.3 follow-up, B9e)
+#
+# No JS harness exists here; these assert the static contract the JS depends on:
+# the delegated list-filter listener the edit page posts to, the server-rendered
+# LANG init (i18n fix B6), and the edit form's Cancel target. JS behaviour itself
+# is verified by inspection against the rendered markup.
+# --------------------------------------------------------------------------- #
+def test_ingest_page_contains_delegated_list_filter_listener() -> None:
+    """``GET /ingest`` renders the delegated ``list-filter`` listener (bug #3.3).
+
+    The list partial re-renders after an edit via a ``list-filter`` event the
+    submit page listens for with a delegated ``document.addEventListener``. Its
+    presence in the rendered Submit page is the contract the edit→list re-render
+    relies on.
+    """
+    resp = _client().get("/ingest")
+    assert resp.status_code == 200
+    assert 'document.addEventListener("list-filter"' in resp.text
+
+
+def test_edit_form_cancel_links_to_ingest(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The edit form's Cancel links to ``/ingest`` (bug #3.3 follow-up).
+
+    Previously Cancel pointed at ``/ingest/list`` (a bare partial with no base
+    layout/nav). The rendered edit form now carries ``href="/ingest"``. This needs
+    a real record in the test DB, so it goes through the create→edit render flow.
+    """
+    from app import records_service
+
+    monkeypatch.setattr(records_service, "embed", _fake_embed)  # type: ignore[assignment]
+
+    client = _client()
+    created = client.post(
+        "/api/records",
+        json={
+            "category": "hydraulics",
+            "product": "valve_b",
+            "failure_description": "F",
+            "solution_description": "S",
+        },
+    )
+    record_id = created.json()["id"]
+    resp = client.get(f"/ingest/{record_id}/edit")
+    assert resp.status_code == 200
+    assert 'href="/ingest"' in resp.text
+
+
+def test_i18n_lang_init_reads_server_lang(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``GET /ingest`` with a ``lang=en`` cookie renders ``var LANG = "en"`` (i18n fix B6).
+
+    The JS now initialises LANG from the server-rendered ``{{ lang }}`` (which the
+    server resolves from the ``lang`` cookie) rather than a hard-coded ``"sv"`` —
+    so the ``POST /lang`` 303 reload actually takes effect on the next render.
+    Assert the rendered init reflects the cookie's language.
+    """
+    en = _client().get("/ingest", cookies={"lang": "en"})
+    assert 'var LANG = "en"' in en.text
+    assert 'if (LANG !== "en") LANG = "sv"' in en.text
+
+    sv = _client().get("/ingest", cookies={"lang": "sv"})
+    assert 'var LANG = "sv"' in sv.text

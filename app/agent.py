@@ -22,6 +22,10 @@ Loop contract (see the contract for the authoritative prose):
 3. If the budget is exhausted without a terminal action, force a best-effort
    final answer through ``chat()`` and return with ``ended_with='budget_exhausted'``.
 
+Retrieval order is set by ``rag_first`` / ``rag_only`` (see :func:`run_agent`),
+which are derived per turn from operator tags (``#docs``, ``#fails``) by
+:mod:`app.rag_routing` in :func:`chat`.
+
 A parse failure is retried once; a second failure forces ``final_answer``. The
 loop therefore always returns and never exceeds ``budget`` turns (NFR-6).
 """
@@ -80,7 +84,13 @@ class _TurnLog:
     filters: str | None
 
 
-def _system_prompt(lang: str, scope: Scope | None) -> str:
+def _system_prompt(
+    lang: str,
+    scope: Scope | None,
+    *,
+    rag_first: bool = False,
+    rag_only: bool = False,
+) -> str:
     """Build the language-aware system prompt.
 
     Swedish is the default (``lang='sv'``); English is the fallback. The prompt
@@ -88,27 +98,62 @@ def _system_prompt(lang: str, scope: Scope | None) -> str:
     over RAG documents, and ask a clarifying question when the failure is
     under-specified. It also includes the current scope note so the model knows
     which category/product/article_number are already selected.
+
+    Retrieval order is governed by two flags: ``rag_only`` (the operator tagged
+    the turn with ``#docs``, so only RAG docs are consulted) takes precedence over
+    ``rag_first`` (RAG consulted before stored records). When both are false the
+    default records-first order applies.
+
+    Args:
+        lang: ``"sv"`` (default) or ``"en"``; the agent answers in this language.
+        scope: The current (never-``None``) scope, appended as a note.
+        rag_first: When ``True`` RAG docs are consulted before stored records.
+        rag_only: When ``True`` only RAG docs are consulted; stored records are
+            never queried. Takes precedence over ``rag_first``.
     """
     if lang == "en":
         base = (
             "You are the Fiffia support agent. Answer the operator's question "
-            "about a machine fault. Cite stored records before RAG documents. "
-            "When the failure is under-specified, ask one clarifying question. "
+            "about a machine fault. "
+        )
+        if rag_only:
+            base += (
+                "Consult only RAG documentation; do not query stored records."
+            )
+        else:
+            base += (
+                "Cite RAG documentation before stored records, then stored records if "
+                "documentation does not answer it."
+                if rag_first
+                else "Cite stored records before RAG documents."
+            )
+        base += (
+            " When the failure is under-specified, ask one clarifying question. "
             "Never invent information."
         )
     else:
         base = (
             "Du är Fiffia-supportagenten. Svara operatörens fråga om ett "
-            "maskfel. Hänvisa till lagrade poster före RAG-dokument. Ställ en "
-            "avklarande fråga om felet är för oklart. Hitta aldrig på "
+            "maskfel. "
+        )
+        if rag_only:
+            base += "Använd endast RAG-dokument; sök inte i lagrade poster."
+        else:
+            base += (
+                "Hänvisa till RAG-dokument före lagrade poster, sedan lagrade poster "
+                "om dokumenten inte besvarar den."
+                if rag_first
+                else "Hänvisa till lagrade postar före RAG-dokument."
+            )
+        base += (
+            "Ställ en avklarande fråga om felet är för oklart. Hitta aldrig på "
             "information."
         )
 
     if scope is not None:
         parts = [f"{key}={value}" for key, value in scope.model_dump().items() if value]
         if parts:
-            note = " Selected context: " + ", ".join(parts) + "."
-            return base + note
+            base += " Selected context: " + ", ".join(parts) + "."
     return base
 
 
@@ -186,6 +231,9 @@ def _dispatch(
     action: AgentAction,
     scope: Scope,
     turn: int,
+    *,
+    rag_first: bool,
+    rag_only: bool,
 ) -> list[Hit]:
     """Run the retrieval tool for a search action and log its result.
 
@@ -193,12 +241,26 @@ def _dispatch(
         action: The parsed :class:`AgentAction`.
         scope: The current (never-``None``) scope, used to scope records search.
         turn: The 1-based turn index, for logging.
+        rag_first: When ``True`` RAG docs are queried before stored records.
+        rag_only: When ``True`` only RAG docs are queried; stored records are
+            never searched regardless of the action.
 
     Returns:
         The retrieved :class:`Hit` rows (possibly empty).
     """
     query = action.query or ""
-    if action.action == "search_records":
+    if rag_only:
+        # Operator forced documentation: RAG only, records are never searched.
+        return retrieve_rag(query)
+    if rag_first:
+        # Operator tagged this turn: query RAG first and fill in records only
+        # when RAG returns nothing — the records leg is the fallback here, not a
+        # separate search the model has to trigger.
+        hits = retrieve_rag(query)
+        if hits:
+            return hits
+        return retrieve_fs(action.filters or scope, query)
+    elif action.action == "search_records":
         hits = retrieve_fs(action.filters or scope, query)
     else:  # pragma: no cover - only search_rag reaches here
         hits = retrieve_rag(query)
@@ -226,6 +288,9 @@ def run_agent(
     messages: list["ChatTurn"],
     lang: str,
     budget: int | None = DEFAULT_BUDGET,
+    *,
+    rag_first: bool = False,
+    rag_only: bool = False,
 ) -> AgentOutcome:
     """Run the agent loop and return the outcome.
 
@@ -238,6 +303,11 @@ def run_agent(
         lang: ``"sv"`` (default) or ``"en"``; the agent answers in this language.
         budget: Maximum number of LLM turns (defaults to ``settings.agent.
             max_turns``).
+        rag_first: When ``True`` RAG docs are consulted before stored records
+            (enforced on session follow-ups). Defaults to records-first.
+        rag_only: When ``True`` only RAG docs are consulted and stored records
+            are never searched (enforced when the operator tags the turn
+            ``#docs``). Takes precedence over ``rag_first``.
 
     Returns:
         An :class:`AgentOutcome` describing the answer, sources and how the loop
@@ -252,7 +322,9 @@ def run_agent(
     user_query = _last_user_message(messages)
 
     context: list[dict] = [
-        {"role": "system", "content": _system_prompt(lang, current_scope)},
+        {"role": "system", "content": _system_prompt(
+            lang, current_scope, rag_first=rag_first, rag_only=rag_only
+        )},
         *_as_messages(messages[:-1]),
         {"role": "user", "content": user_query},
     ]
@@ -280,7 +352,7 @@ def run_agent(
                 ended_with="final_answer",
             )
 
-        hits = _dispatch(action, current_scope, turn)
+        hits = _dispatch(action, current_scope, turn, rag_first=rag_first, rag_only=rag_only)
         collected.update({str(h.id): h for h in hits})
         context.append(
             {
@@ -305,7 +377,7 @@ def run_agent(
             {
                 "role": "system",
                 "content": (
-                    _system_prompt(lang, current_scope)
+                    _system_prompt(lang, current_scope, rag_first=rag_first, rag_only=rag_only)
                     + f" You reached the turn budget. Answer the user's question in "
                     f"{lang} using only the information gathered so far, and cite the "
                     "sources. User question: "
