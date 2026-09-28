@@ -173,24 +173,56 @@ def _fetch_records_lexical(scope: Scope, query: str, topk: int) -> list[Hit]:
 
 
 # RAG RRF query (`CONTRACT.md` §8): identical in shape to the records RRF query
-# but over `rag_chunks` and with no metadata filters (a document chunk has no
-# category/product scope). Rows are ranked by reciprocal rank fusion of the
-# vector and lexical legs over the shared `rag_chunks` id.
+# but over `rag_chunks`. Rows are ranked by reciprocal rank fusion of the vector
+# and lexical legs over the shared `rag_chunks` id.
+#
+# Both legs scope by the caller's category/product (optional): the
+# same `%(category)s` / `%(product)s` filters used by `retrieve_fs`. An empty
+# scope (both params NULL) matches every chunk, so an untagged ingest is never
+# silently dropped when the caller isn't scoping; a non-empty scope matches only
+# chunks tagged with the provided category or product, so scoping narrows the pool
+# to the product being discussed.
 _RAG_RRF_SQL = """
 WITH vec AS (
-    SELECT id, chunk_text, section_header, source_file,
+    SELECT id, chunk_text, section_header, source_file, category, product,
            ROW_NUMBER() OVER (ORDER BY embedding <=> %(qvec)s::vector) AS rank
     FROM rag_chunks
+    WHERE (
+        -- Empty scope (both params NULL): match everything, so untagged data
+        -- is never silently dropped when the caller isn't scoping.
+        (%(category)s::text IS NULL AND %(product)s::text IS NULL)
+        -- Non-empty scope: a chunk is in scope only when it carries a tag
+        -- that matches a provided field. An untagged chunk (category/product
+        -- NULL) yields NULL on every comparison, so it is excluded here —
+        -- which is the whole point of scoping: pull only this product's docs.
+        OR (
+            (%(category)s::text IS NOT NULL AND category = %(category)s::text)
+            OR (%(product)s::text IS NOT NULL AND product = %(product)s::text)
+        )
+    )
     ORDER BY embedding <=> %(qvec)s::vector
     LIMIT %(pool)s
 ),
 txt AS (
-    SELECT id, chunk_text, section_header, source_file,
+    SELECT id, chunk_text, section_header, source_file, category, product,
            ROW_NUMBER() OVER (
                ORDER BY ts_rank(fts, plainto_tsquery('simple', %(q)s)) DESC
            ) AS rank
     FROM rag_chunks
     WHERE fts @@ plainto_tsquery('simple', %(q)s)
+      AND (
+          -- Empty scope (both params NULL): match everything, so untagged data
+          -- is never silently dropped when the caller isn't scoping.
+          (%(category)s::text IS NULL AND %(product)s::text IS NULL)
+          -- Non-empty scope: a chunk is in scope only when it carries a tag
+          -- that matches a provided field. An untagged chunk (category/product
+          -- NULL) yields NULL on every comparison, so it is excluded here —
+          -- which is the whole point of scoping: pull only this product's docs.
+          OR (
+              (%(category)s::text IS NOT NULL AND category = %(category)s::text)
+              OR (%(product)s::text IS NOT NULL AND product = %(product)s::text)
+          )
+      )
     LIMIT %(pool)s
 )
 SELECT
@@ -198,6 +230,8 @@ SELECT
     COALESCE(v.chunk_text, t.chunk_text)    AS chunk_text,
     COALESCE(v.section_header, t.section_header) AS section_header,
     COALESCE(v.source_file, t.source_file)  AS source_file,
+    COALESCE(v.category, t.category)        AS category,
+    COALESCE(v.product, t.product)          AS product,
     (COALESCE(1.0/(%(rrf_k)s + v.rank), 0.0)
      + COALESCE(1.0/(%(rrf_k)s + t.rank), 0.0)) AS rrf_score
 FROM vec v
@@ -207,17 +241,31 @@ LIMIT %(topk)s;
 """
 
 # Lexical-only leg over `rag_chunks`, used when the query embedding cannot be
-# produced. The vector leg is dropped; rows are ranked by their lexical leg.
+# produced. The vector leg is dropped; rows are ranked by their lexical leg and
+# scoped exactly like the RRF query above.
 _RAG_LEXICAL_SQL = """
-SELECT id, chunk_text, section_header, source_file,
+SELECT id, chunk_text, section_header, source_file, category, product,
        1.0/(%(rrf_k)s + t.rank) AS rrf_score
 FROM (
-    SELECT id, chunk_text, section_header, source_file,
+    SELECT id, chunk_text, section_header, source_file, category, product,
            ROW_NUMBER() OVER (
                ORDER BY ts_rank(fts, plainto_tsquery('simple', %(q)s)) DESC
            ) AS rank
     FROM rag_chunks
     WHERE fts @@ plainto_tsquery('simple', %(q)s)
+      AND (
+          -- Empty scope (both params NULL): match everything, so untagged data
+          -- is never silently dropped when the caller isn't scoping.
+          (%(category)s::text IS NULL AND %(product)s::text IS NULL)
+          -- Non-empty scope: a chunk is in scope only when it carries a tag
+          -- that matches a provided field. An untagged chunk (category/product
+          -- NULL) yields NULL on every comparison, so it is excluded here —
+          -- which is the whole point of scoping: pull only this product's docs.
+          OR (
+              (%(category)s::text IS NOT NULL AND category = %(category)s::text)
+              OR (%(product)s::text IS NOT NULL AND product = %(product)s::text)
+          )
+      )
     LIMIT %(pool)s
 ) AS t
 ORDER BY rrf_score DESC
@@ -234,10 +282,18 @@ def _score_rag_row(row: dict) -> Hit:
         source_file=row["source_file"],
         section_header=row["section_header"],
         chunk_text=row["chunk_text"],
+        category=row["category"],
+        product=row["product"],
     )
 
 
-def _fetch_rag(qvec: list[float], query: str, topk: int, rrf_k: int) -> list[Hit]:
+def _fetch_rag(
+    qvec: list[float],
+    scope: Scope,
+    query: str,
+    topk: int,
+    rrf_k: int,
+) -> list[Hit]:
     """Run the RAG RRF query and map its rows onto :class:`Hit`."""
     conn = _checkout()
     try:
@@ -246,6 +302,8 @@ def _fetch_rag(qvec: list[float], query: str, topk: int, rrf_k: int) -> list[Hit
                 _RAG_RRF_SQL,
                 {
                     "qvec": _as_vector(qvec),
+                    "category": scope.category,
+                    "product": scope.product,
                     "q": query,
                     "pool": settings.retrieval.pool,
                     "rrf_k": rrf_k,
@@ -258,7 +316,7 @@ def _fetch_rag(qvec: list[float], query: str, topk: int, rrf_k: int) -> list[Hit
         _release(conn)
 
 
-def _fetch_rag_lexical(query: str, topk: int) -> list[Hit]:
+def _fetch_rag_lexical(scope: Scope, query: str, topk: int) -> list[Hit]:
     """Lexical-only leg over `rag_chunks`, ranked by lexical RRF."""
     conn = _checkout()
     try:
@@ -266,6 +324,8 @@ def _fetch_rag_lexical(query: str, topk: int) -> list[Hit]:
             cur.execute(
                 _RAG_LEXICAL_SQL,
                 {
+                    "category": scope.category,
+                    "product": scope.product,
                     "q": query,
                     "pool": settings.retrieval.pool,
                     "rrf_k": settings.retrieval.rrf_k,
@@ -278,14 +338,25 @@ def _fetch_rag_lexical(query: str, topk: int) -> list[Hit]:
         _release(conn)
 
 
-def retrieve_rag(query: str, top_k: int | None = None) -> list[Hit]:
+def retrieve_rag(
+    query: str,
+    top_k: int | None = None,
+    *,
+    scope: Scope | None = None,
+) -> list[Hit]:
     """Hybrid retrieval over `rag_chunks`.
 
     Combines a vector leg (HNSW cosine proximity to the query embedding) and a
     lexical leg (GIN full-text match over `fts`) with reciprocal rank fusion,
     then caps the results at ``top_k`` (default
-    ``settings.retrieval.top_k_rag``). No metadata scope is applied — a document
-    chunk is matched purely on content, per `CONTRACT.md` §8.
+    ``settings.retrieval.top_k_rag``).
+
+    A caller's :class:`~app.records_repo.Scope` (category + product) is applied as
+    a structured ``WHERE`` (optional) on both legs, mirroring :func:`retrieve_fs`.
+    An empty scope (both fields unset) matches every chunk — so an untagged chunk
+    ingested before scoping existed is never silently dropped; a non-empty scope
+    matches only chunks tagged with the provided category or product, narrowing RAG
+    to the product being discussed.
 
     If the query embedding fails, the lexical leg runs alone and a warning is
     logged — the search must not fail because the embedding server is down.
@@ -293,12 +364,15 @@ def retrieve_rag(query: str, top_k: int | None = None) -> list[Hit]:
     Args:
         query: The natural-language query; embedded as its own text.
         top_k: Result cap; defaults to ``settings.retrieval.top_k_rag``.
+        scope: Category/product filters. ``None`` or an all-``None`` scope applies
+            no filter.
 
     Returns:
         Ranked :class:`Hit` rows, each with ``source='rag'``.
     """
     if top_k is None:
         top_k = settings.retrieval.top_k_rag
+    scope = scope or Scope()
 
     try:
         with OLLAMA_LOCK:
@@ -309,9 +383,9 @@ def retrieve_rag(query: str, top_k: int | None = None) -> list[Hit]:
             "retrieval: %s",
             exc,
         )
-        return _fetch_rag_lexical(query, top_k)
+        return _fetch_rag_lexical(scope, query, top_k)
 
-    return _fetch_rag(qvec, query, top_k, settings.retrieval.rrf_k)
+    return _fetch_rag(qvec, scope, query, top_k, settings.retrieval.rrf_k)
 
 
 def retrieve_fs(scope: Scope, query: str, top_k: int | None = None) -> list[Hit]:
