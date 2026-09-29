@@ -34,13 +34,19 @@ from app.db import run_migrations
 print("migrations applied:", run_migrations())
 PY
 
-# Serve the webui app (app.webui:app) when WEBUI=1, otherwise the API app.
-# Both share the entrypoint and the same migration step; only the uvicorn
-# module and port differ.
+# Serve the webui app (app.webui:app) when WEBUI=1, otherwise the MCP server
+# when MCP=1, otherwise the API app. All three share the entrypoint and the
+# same migration step; only the uvicorn module and port differ.
 if [ "${WEBUI:-0}" = "1" ]; then
   PORT="${WEBUI_PORT:-8001}"
   echo "[entrypoint] serving webui on 0.0.0.0:${PORT}"
   exec uvicorn app.webui:app --host 0.0.0.0 --port "${PORT}"
+fi
+
+if [ "${MCP:-0}" = "1" ]; then
+  PORT="${MCP_PORT:-9002}"
+  echo "[entrypoint] serving MCP on 0.0.0.0:${PORT}"
+  exec uvicorn scripts.run_mcp:app --host 0.0.0.0 --port "${PORT}"
 fi
 
 echo "[entrypoint] starting uvicorn on 0.0.0.0:8000"

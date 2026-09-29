@@ -20,6 +20,12 @@ The four services are defined in [`docker-compose.yml`](docker-compose.yml):
 Jinja2 HTML, port 9001). Two named volumes, `postgres_data` and `ollama_data`,
 persist the database and models across `docker compose down`.
 
+A fifth service, `mcp` (MCP server, port 9002), is also defined. It exposes the
+same retrieval / record / chat pipeline as the API and WebUI, but over the
+Model Context Protocol, so MCP clients (Claude Code, Cursor, Windsurf, …) can
+drive super-fiffia. It runs alongside the WebUI — both share one Postgres and one
+Ollama, so no rebuild is needed to use them together.
+
 ---
 
 ## 1. Prerequisites

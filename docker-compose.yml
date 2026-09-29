@@ -101,6 +101,34 @@ services:
     networks:
       - fiffia
 
+  mcp:
+    build: .
+    container_name: fiffia-mcp
+    environment:
+      # Same DSN/credentials the API and webui use; Ollama at the in-cluster
+      # service (self-contained stack) rather than a host-specific IP.
+      - FS_DSN=${FS_DSN:-postgresql://fiffia:fiffia@postgres:5432/fiffia_fs}
+      - WEBUI=0
+      - MCP=1
+      - MCP_PORT=9002
+      - FS_OLLAMA_URL=${FS_OLLAMA_URL:-http://ollama:11434}
+    ports:
+      - "9002:9002"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:9002/api/health\", timeout=4)'"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+    networks:
+      - fiffia
+
 volumes:
   postgres_data:
   ollama_data:
