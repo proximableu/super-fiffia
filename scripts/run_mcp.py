@@ -15,16 +15,10 @@ probe on top of it.
 
 from __future__ import annotations
 
-import json
-
 from fastapi.responses import JSONResponse
 
 from app.mcp import mcp
-
-
-async def _health(_request) -> JSONResponse:
-    """Liveness probe for the MCP server."""
-    return JSONResponse({"status": "ok"})
+from app.api import _health
 
 
 def _build_app():
