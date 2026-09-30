@@ -115,6 +115,21 @@ FS_OLLAMA_URL=http://host.docker.internal:11434
 Whichever backend you pick, make sure the **model is pulled** before the first
 embed/chat call (§4).
 
+> **Dev-shell Ollama gotcha (see [`remote-ollama-guide.md`](remote-ollama-guide.md)).**
+> The app reads `FS_OLLAMA_URL`, falling back to the `settings.yaml` `base_url`
+> (default `http://localhost:11434`) when unset — it **ignores** `OLLAMA_HOST`,
+> which only the **CLI** uses. On a machine with a remote server on the LAN
+> (`OLLAMA_HOST=http://192.168.0.14:11434`, what `ollama list` shows) and a
+> separate host-local instance, the CLI and the app point at **different**
+> servers, so models pulled on the remote are invisible to the local app. Fix:
+>
+> - Point the app at where the models are:
+>   `FS_OLLAMA_URL=http://127.0.0.1:11434` (no `OLLAMA_HOST` shim needed).
+> - Pull against the local instance from a shell whose `OLLAMA_HOST` points
+>   elsewhere: `OLLAMA_HOST=http://127.0.0.1:11434 ollama pull …`.
+> - The **test suite mocks Ollama**; the guide's smoke test exercises the real
+>   (CPU-only) path.
+
 ## 4. Bring the stack up
 
 ```bash
