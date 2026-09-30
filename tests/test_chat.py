@@ -172,6 +172,78 @@ def test_history_trims_to_cap(monkeypatch: pytest.MonkeyPatch) -> None:
     assert history[-2].content == "q"
 
 
+def test_history_evicts_least_recently_used(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Sessions past MAX_SESSIONS are evicted LRU; the most-recently-used one is
+    retained."""
+    monkeypatch.setattr(settings.agent, "max_turns", 5)
+    _script(monkeypatch, _outcome())
+
+    # Exercise enough sessions to exceed the bound; touch ``hot`` last so it is
+    # the most-recently-used.
+    for i in range(chat_mod.MAX_SESSIONS + 20):
+        chat(scope=None, messages=[ChatTurn(role="user", content=f"q{i}")], lang="en", session_token=f"s{i}")
+    # A distinct "hot" session touched last.
+    chat(scope=None, messages=[ChatTurn(role="user", content="hot")], lang="en", session_token="hot")
+
+    # The store is capped: we never held more than MAX_SESSIONS at once.
+    assert len(chat_mod._history) <= chat_mod.MAX_SESSIONS
+    # ``hot`` was touched last, so it survives eviction.
+    assert "hot" in chat_mod._history
+    # The sessions evicted are the least-recently-used ones — they are gone.
+    for i in range(5):
+        assert f"s{i}" not in chat_mod._history
+
+
+def test_eviction_preserves_lru_order(monkeypatch: pytest.MonkeyPatch) -> None:
+    """After eviction, the retained sessions are in most-recently-used order."""
+    monkeypatch.setattr(settings.agent, "max_turns", 5)
+    _script(monkeypatch, _outcome())
+
+    for i in range(chat_mod.MAX_SESSIONS + 10):
+        chat(scope=None, messages=[ChatTurn(role="user", content="q")], lang="en", session_token=f"t{i}")
+
+    keys = list(chat_mod._history)
+    assert len(keys) == chat_mod.MAX_SESSIONS
+    # Least-recently-used (oldest) evicted; retained sessions keep LRU order,
+    # newest at the end.
+    assert keys[0] == "t10"
+    assert keys[-1] == f"t{chat_mod.MAX_SESSIONS + 9}"
+
+
+def test_clear_evicts_when_overbound(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Clearing a session evicts the least-recently-used session if over bound."""
+    monkeypatch.setattr(settings.agent, "max_turns", 5)
+    _script(monkeypatch, _outcome())
+
+    for i in range(chat_mod.MAX_SESSIONS):
+        chat(scope=None, messages=[ChatTurn(role="user", content="q")], lang="en", session_token=f"u{i}")
+    assert len(chat_mod._history) == chat_mod.MAX_SESSIONS
+
+    # Clearing an existing session (``u0``) still enforces the bound.
+    clear_session("u0")
+    assert "u0" not in chat_mod._history
+    assert len(chat_mod._history) <= chat_mod.MAX_SESSIONS
+
+
+def test_chat_rolls_back_history_on_raised_agent(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A turn whose run_agent raises leaves no user turns in history."""
+    monkeypatch.setattr(settings.agent, "max_turns", 5)
+    _script(monkeypatch, _outcome())
+    chat(scope=None, messages=[ChatTurn(role="user", content="q1")], lang="en")
+    # A following turn whose agent raises.
+    def boom(_scope, _messages, _lang, **_):
+        raise RuntimeError("boom")
+    monkeypatch.setattr("app.chat.run_agent", boom)
+
+    with pytest.raises(RuntimeError):
+        chat(scope=None, messages=[ChatTurn(role="user", content="q2")], lang="en")
+
+    history = chat_mod._history[chat_mod._DEFAULT_SESSION]
+    # Only the prior turn survives; the failed turn's user message is gone.
+    assert [t.content for t in history] == ["q1", "an answer"]
+    assert history[-1].role == "assistant"
+
+
 def test_to_response_maps_fields() -> None:
     """to_response maps an AgentOutcome onto the ChatResponse contract."""
     outcome = _outcome(answer="x", turns_used=4, ended_with="budget_exhausted")

@@ -28,6 +28,7 @@ through ``app.ollama.OLLAMA_LOCK``.
 from __future__ import annotations
 
 import logging
+from collections import OrderedDict
 from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
@@ -43,16 +44,27 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Per-session in-memory conversation history: ``{session_token: [ChatTurn, ...]}``.
-# Cleared by :func:`clear_session` and lost on process restart. History is lossy:
-# only the last ``MAX_HISTORY_TURNS`` turns of a session are retained (older turns
-# are dropped, not just the assistant answers) — see :func:`_trim_history`.
-_history: dict[str, list[ChatTurn]] = {}
+# Per-session in-memory conversation history, held in an :class:`OrderedDict`
+# used as a least-recently-used cache (see M8): the most recently accessed
+# session is moved to the end and the oldest is evicted once the session-count
+# bound below is exceeded. Sessions are cleared by :func:`clear_session` and
+# lost on process restart. Per-session history is lossy — only the last
+# ``MAX_HISTORY_TURNS`` turns of a session are retained (older turns are dropped,
+# not just the assistant answers) — see :func:`_trim_history`.
+_history: OrderedDict[str, list[ChatTurn]] = OrderedDict()
 
 # Upper bound on the number of turns kept in a session's in-memory history. We
 # keep the most recent ``MAX_HISTORY_TURNS`` turns; anything older is trimmed on
 # the next turn so a long-lived session cannot grow the cache without bound.
 MAX_HISTORY_TURNS = 20
+
+# Upper bound on the number of *sessions* retained in :data:`_history`. The cache
+# is a least-recently-used store: every :func:`chat` / :func:`clear_session`
+# access moves its session to the most-recently-used end, and once more than
+# ``MAX_SESSIONS`` sessions are held the least-recently-used one is evicted. This
+# bounds the memory of this module-level store regardless of how many distinct
+# callers (MCP, API, WebUI) touch it in a single process.
+MAX_SESSIONS = 64
 
 
 def _trim_history(session_token: str, history: list[ChatTurn]) -> None:
@@ -72,6 +84,22 @@ def _trim_history(session_token: str, history: list[ChatTurn]) -> None:
             session_token,
             len(history),
         )
+
+
+def _touch_and_bound(session_token: str) -> None:
+    """Manage :data:`_history` bookkeeping: LRU placement plus the session bound.
+
+    Moves ``session_token`` to the most-recently-used end of :data:`_history`
+    (a session created by ``setdefault`` is simply added at the end) and evicts
+    the least-recently-used sessions once the count exceeds :data:`MAX_SESSIONS`.
+    Safe to call for a session that is about to be cleared (clearing just pops
+    it again).
+    """
+    if session_token in _history:
+        _history.move_to_end(session_token)
+    while len(_history) > MAX_SESSIONS:
+        evicted, _ = _history.popitem(last=False)
+        logger.info("evicted least-recently-used session %r", evicted)
 
 
 class ChatResponse(BaseModel):
@@ -102,8 +130,12 @@ def chat(
     assistant answer is appended back so follow-up turns see the full exchange.
     """
     history = _history.setdefault(session_token, [])
-    is_first_turn = len(history) == 0
+    _touch_and_bound(session_token)
+    # Capture the pre-turn length before folding in the new user turn(s):
+    # truncate back to this on the way out of the except if the agent raises.
+    before = len(history)
     history.extend(messages)
+    is_first_turn = len(history) == 0
 
     # Retrieval routing (highest-precedence marker wins):
     #   #fails tag   -> records first (both flags off — force the fs fallback)
@@ -120,14 +152,21 @@ def chat(
     else:
         rag_first, rag_only = not is_first_turn, False
 
-    outcome = run_agent(
-        scope,
-        list(history),
-        lang,
-        budget=settings.agent.max_turns,
-        rag_first=rag_first,
-        rag_only=rag_only,
-    )
+    try:
+        outcome = run_agent(
+            scope,
+            list(history),
+            lang,
+            budget=settings.agent.max_turns,
+            rag_first=rag_first,
+            rag_only=rag_only,
+        )
+    except Exception:
+        # M16: the user turn(s) were appended to history just above; the agent
+        # raised before emitting an answer, so truncate back to the pre-turn
+        # length before re-raising to keep history consistent.
+        del history[before:]
+        raise
 
     history.append(ChatTurn(role="assistant", content=outcome.answer))
     _trim_history(session_token, history)
@@ -151,7 +190,12 @@ def to_response(outcome: AgentOutcome) -> ChatResponse:
 
 
 def clear_session(session_token: str = _DEFAULT_SESSION) -> None:
-    """Reset the in-memory history for a session (the webui's ``/chat/clear``)."""
+    """Reset the in-memory history for a session (the webui's ``/chat/clear``).
+
+    Also evicts the least-recently-used sessions if the cache is over bound:
+    :data:`MAX_SESSIONS`.
+    """
     popped = _history.pop(session_token, None)
     if popped:
         logger.info("chat history cleared for session %r", session_token)
+    _touch_and_bound(session_token)
