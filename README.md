@@ -155,6 +155,35 @@ A missing dependency returns `503` with that dependency marked.
 
 ---
 
+## MCP server
+
+The F&S knowledge base is also exposed over the [Model Context Protocol](https://modelcontextprotocol.io)
+so MCP clients (Claude Code, Cursor, Windsurf, …) can drive the same retrieval /
+record / chat pipeline that the WebUI and API use. The server runs on its own
+uvicorn process on **port 9002** (the WebUI/API processes are never touched),
+created with `mcp.http_app(path="/")` in `scripts/run_mcp.py`; a `/api/health`
+route reuses the API's dependency probe so the container healthcheck is not
+liveness-only.
+
+Four read-only tools are published:
+
+| Tool            | Purpose                                             |
+|-----------------|-----------------------------------------------------|
+| `search`        | Hybrid RRF search over stored records + RAG docs     |
+| `list_records`  | List records with structured filters, optional text  |
+| `get_record`    | Fetch a single record by id                          |
+| `chat`          | One agent turn over the session history              |
+
+`clear_session` drops a chat session's in-memory history. Tool results use the
+same `{"error": {"code", "message"}}` envelope as the REST API
+(`not_found` | `validation` | `internal`).
+
+> Auth posture: the MCP server is **unauthenticated and LAN-only** — the same
+> trust boundary as the API and WebUI container. Binding `0.0.0.0` is intentional
+> on a trusted LAN; per-token auth is future work.
+
+---
+
 ## Test
 
 The suite is run against a dedicated **test** database (independent of any
